@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # ── Retrieval ───────────────────────────────────────────────────
     top_k: int = 5
+    min_semantic_score: float = 0.65  # ANN relevance floor — docs below this are discarded
     recency_weight: float = 0.3
     semantic_weight: float = 0.7
     recency_half_life_days: int = 90  # weight halves after N days

@@ -9,6 +9,8 @@ pre-computed embeddings via ``search()`` and ``upsert_record()``.
 
 from __future__ import annotations
 
+import threading
+
 import lancedb
 import pyarrow as pa
 
@@ -32,6 +34,7 @@ class LanceDBClient:
 
     def __init__(self) -> None:
         self._table = None
+        self._lock = threading.Lock()
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
@@ -56,7 +59,8 @@ class LanceDBClient:
         """
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
-        return self._table.search(embedding).limit(settings.top_k).to_list()  # type: ignore[union-attr]
+        with self._lock:
+            return self._table.search(embedding).limit(settings.top_k).to_list()  # type: ignore[union-attr]
 
     def upsert_record(
         self,
@@ -72,8 +76,9 @@ class LanceDBClient:
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
 
-        self._table.add([{  # type: ignore[union-attr]
+        data_dict = {
             "vector": embedding,
+            "record_id": record.record_id or "",
             "bug_title": record.bug_title,
             "error_log_snippet": record.error_log_snippet,
             "tried_methods": record.tried_methods,
@@ -83,9 +88,19 @@ class LanceDBClient:
             "root_cause": record.root_cause or "",
             "create_time": record.create_time,
             "search_text": search_text,
-        }])
+        }
 
-        logger.info("Saved bug record: %s", record.bug_title)
+        # ── True upsert via merge_insert ────────────────────────────
+        # Matches on ``record_id``: existing record → update all fields;
+        # new record → insert all fields.  This guarantees no duplicate
+        # entries for the same (bug_title + error_log_snippet).
+        with self._lock:
+            self._table.merge_insert("record_id") \
+                .when_matched_update_all() \
+                .when_not_matched_insert_all() \
+                .execute([data_dict])
+
+        logger.info("Saved bug record: %s (record_id=%s)", record.bug_title, record.record_id)
 
     # ── Internal helpers ────────────────────────────────────────────
 
@@ -101,6 +116,7 @@ class LanceDBClient:
         else:
             schema = pa.schema([
                 pa.field("vector", pa.list_(pa.float32(), settings.embedding_dim)),
+                pa.field("record_id", pa.utf8()),
                 pa.field("bug_title", pa.utf8()),
                 pa.field("error_log_snippet", pa.utf8()),
                 pa.field("tried_methods", pa.utf8()),
@@ -111,5 +127,5 @@ class LanceDBClient:
                 pa.field("create_time", pa.utf8()),
                 pa.field("search_text", pa.utf8()),
             ])
-            self._table = db.create_table(self.TABLE_NAME, schema=schema, mode="create")
+            self._table = db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
             logger.info("Created new table: %s", self.TABLE_NAME)

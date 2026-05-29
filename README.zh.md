@@ -126,9 +126,20 @@ uv run pytest tests/test_core.py -v
 
 BugVault 通过 MCP 的 **stdio 传输** 工作——它是作为 MCP 客户端的子进程运行的。无需启动 HTTP 服务器，无需配置端口。
 
-#### 配置 Claude Code CLI
+### 配置文件
 
-Claude Code 从 `~/.claude/settings.json` 读取 MCP 服务器配置。将 BugVault 添加到 `mcpServers`：
+#### 文件位置
+
+MCP 服务器配置是一个 JSON 文件，位置取决于客户端：
+
+| 客户端 | 配置文件路径 |
+|--------|-------------|
+| **Claude Code（CLI）** | `~/.claude/settings.json` |
+| **Claude Desktop** | **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`<br>**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`<br>**Linux:** `~/.config/Claude/claude_desktop_config.json` |
+
+#### 配置内容
+
+将 BugVault 添加到 `mcpServers`：
 
 ```json
 {
@@ -146,46 +157,65 @@ Claude Code 从 `~/.claude/settings.json` 读取 MCP 服务器配置。将 BugVa
 ```
 
 > **重要：** 必须使用 **绝对路径** 配置 `uv` 路径和项目目录。不要使用 `~` 或相对路径。
+>
+> 💡 运行 `which uv`（macOS/Linux）或 `where uv`（Windows）查找 `uv` 的完整路径。
 
-添加配置后，重启 Claude Code。服务器采用 **懒启动** 方式——只有当你首次调用其工具（`save_bug_experience` 或 `retrieve_bug_experience`）时才会启动。首次冷启动约需 3~5 秒（需要下载/加载 Embedding 模型并连接 LanceDB）。
+### 使用 `/mcp` 命令（Claude Code）
 
-验证服务器运行状态：
+编辑 `~/.claude/settings.json` 后，**完全重启** Claude Code（不只是 `/mcp` — 关闭并重新打开终端即可）。然后输入：
 
 ```
 /mcp
 ```
 
-#### 配置 Claude Desktop
+该命令列出所有配置的 MCP 服务器，每个有以下三种状态之一：
 
-在 `claude_desktop_config.json` 中添加：
+| 状态 | 含义 |
+|------|------|
+| **running** ✅ | 服务器已激活并就绪 |
+| **not running** ⏸️ | 正常 — BugVault 使用**懒加载**（见下文） |
+| **error** ❌ | 服务器启动失败 — 路径可能配置有误 |
 
-```json
-{
-  "mcpServers": {
-    "bugvault": {
-      "command": "/path/to/uv",
-      "args": [
-        "run",
-        "--directory", "/绝对路径/bugvault",
-        "python", "-m", "bugvault.main"
-      ]
-    }
-  }
-}
-```
+> **懒加载：** BugVault 仅在你首次调用其工具（`save_bug_experience` 或 `retrieve_bug_experience`）时才会启动。显示 "not running" 是预期行为。首次工具调用后，`/mcp` 会显示 "running"。
+>
+> **首次调用别慌：** 首次冷启动需要 **3~5 秒**（下载/加载 Embedding 模型 + 连接 LanceDB）。这完全正常——后续调用是瞬时的。
 
-`claude_desktop_config.json` 的位置：
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+如果状态显示 **"error"**，最常见的原因是路径有误。请逐一检查：
+- `which uv` 给出的路径是否绝对路径
+- `--directory` 参数是否指向 BugVault 项目根目录（包含 `pyproject.toml` 的目录）
+- 是否使用了 `~` 或 `$HOME` — 请展开为完整路径
+
+> **注意：** `/mcp stop`、`/mcp restart` 等子命令并非在所有版本的 Claude Code 中都可用。如果它们不起作用，只需重启终端或 Claude Desktop 即可。
+
+### 首次使用注意事项
+
+1. **必须重启** — Claude Code 和 Claude Desktop 仅在启动时读取配置文件。编辑 `settings.json` 后，需要关闭并重新打开。
+2. **首次工具调用较慢（约 3~5 秒）** — Embedding 模型（90 MB）在首次使用时下载（如果未缓存）。服务器将日志输出到 stderr，在 Claude Code 中不可见，但手动运行时可见。
+3. **代理用户：** 如果处于企业 VPN/代理环境下，首次调用可能失败：
+   ```bash
+   # 先取消代理下载模型
+   unset all_proxy ALL_PROXY
+   uv run python -m bugvault.main  # 触发下载
+   ```
+   模型缓存到 `~/.cache/fastembed/` 后，重新启用代理即可。
+4. **语言不影响使用：** 即使你使用英文版 Claude，存储中文 Bug 记录也完全 OK——Embedding 模型（`BAAI/bge-small-zh-v1.5`）是中英双语的。直接用自然语言描述即可。
 
 ### 验证部署
 
-1. 在 Claude Code 或 Claude Desktop 中开始对话
-2. 让 Claude 保存一条测试记录
-3. 让 Claude 检索该记录
+重启 MCP 客户端后，逐步尝试以下操作来确认一切正常：
+
+**1. 保存一条测试记录：**
+> "帮我保存一条测试 Bug 记录：标题是 'test deployment'，报错是 'ConnectionError: timeout'，尝试过重启服务，最终方案是增加超时时间"
+
+**2. 检索它：**
+> "我遇到过 connection timeout 的问题，帮我查一下 BugVault 里的历史记录"
 
 如果部署成功，Claude 会调用 MCP 工具并返回结果。
+
+**如果 Claude 说"我没有这个工具"**：
+- 先用 `/mcp` 检查状态（Claude Code）
+- 重新检查配置文件中的路径
+- 试试下面的手动测试
 
 ### 手动测试
 

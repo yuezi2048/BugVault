@@ -126,9 +126,20 @@ uv run pytest tests/test_core.py -v
 
 BugVault は MCP の **stdio トランスポート** で通信します — MCP クライアントの子プロセスとして動作します。HTTP サーバーの起動もポートの設定も不要です。
 
-#### Claude Code CLI の設定
+### 設定ファイル
 
-Claude Code は `~/.claude/settings.json` から MCP サーバー設定を読み込みます。`mcpServers` に BugVault を追加します：
+#### ファイルの場所
+
+MCP サーバー設定は JSON ファイルです。場所はクライアントによって異なります：
+
+| クライアント | 設定ファイルのパス |
+|------------|------------------|
+| **Claude Code（CLI）** | `~/.claude/settings.json` |
+| **Claude Desktop** | **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`<br>**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`<br>**Linux:** `~/.config/Claude/claude_desktop_config.json` |
+
+#### 設定内容
+
+`mcpServers` に BugVault を追加します：
 
 ```json
 {
@@ -146,46 +157,65 @@ Claude Code は `~/.claude/settings.json` から MCP サーバー設定を読み
 ```
 
 > **重要：** `uv` のパスとプロジェクトディレクトリは **絶対パス** を使用してください。`~` や相対パスは使わないでください。
+>
+> 💡 `which uv`（macOS/Linux）または `where uv`（Windows）を実行して、`uv` の正確な絶対パスを確認してください。
 
-設定後、Claude Code を再起動します。サーバーは **遅延起動** します — ツール（`save_bug_experience` または `retrieve_bug_experience`）を初めて呼び出したときに起動します。初回コールドスタートは約 3〜5 秒かかります（Embedding モデルのダウンロード/ロードと LanceDB 接続）。
+### `/mcp` コマンドの使い方（Claude Code）
 
-サーバーの状態確認：
+`~/.claude/settings.json` を編集したら、Claude Code を**完全に再起動**します（`/mcp` だけではなく — ターミナルを閉じて開き直せば OK）。その後、以下を入力：
 
 ```
 /mcp
 ```
 
-#### Claude Desktop の設定
+これにより、設定済みの全 MCP サーバーが 3 つのステータスのいずれかで表示されます：
 
-`claude_desktop_config.json` に以下を追加：
+| ステータス | 意味 |
+|-----------|------|
+| **running** ✅ | サーバーがアクティブで使用可能 |
+| **not running** ⏸️ | 正常 — BugVault は**遅延読み込み**を使用（下記参照） |
+| **error** ❌ | サーバーの起動に失敗 — パスが間違っている可能性大 |
 
-```json
-{
-  "mcpServers": {
-    "bugvault": {
-      "command": "/path/to/uv",
-      "args": [
-        "run",
-        "--directory", "/絶対パス/bugvault",
-        "python", "-m", "bugvault.main"
-      ]
-    }
-  }
-}
-```
+> **遅延読み込み：** BugVault はツール（`save_bug_experience` または `retrieve_bug_experience`）を初めて呼び出したときにのみ起動します。"not running" と表示されても問題ありません。初回ツール呼び出し後は、`/mcp` に "running" と表示されます。
+>
+> **初回呼び出しは慌てないで：** 初回コールドスタートには **3〜5 秒** かかります（Embedding モデルのダウンロード/ロード + LanceDB 接続）。これは正常であり、以降の呼び出しは瞬時に行われます。
 
-`claude_desktop_config.json` の場所：
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+ステータスが **"error"** の場合、最も多い原因はパスの誤りです。以下を確認してください：
+- `which uv` で正しい絶対パスが表示されるか
+- `--directory` 引数が BugVault プロジェクトルート（`pyproject.toml` のあるディレクトリ）を指しているか
+- `~` や `$HOME` を使っていないか — フルパスに展開してください
+
+> **注意：** `/mcp stop`、`/mcp restart` などのサブコマンドは、すべてのバージョンの Claude Code で利用できるわけではありません。動作しない場合は、単にターミナルまたは Claude Desktop アプリを再起動してください。
+
+### 初回起動のヒント
+
+1. **再起動は必須** — Claude Code と Claude Desktop は起動時にのみ設定ファイルを読み込みます。`settings.json` 編集後は、閉じて開き直す必要があります。
+2. **初回ツール呼び出しは遅い（約 3〜5 秒）** — Embedding モデル（90 MB）が初回使用時にダウンロードされます（キャッシュされていない場合）。サーバーのログは stderr に出力されるため、Claude Code 内では見えませんが、手動実行時には確認できます。
+3. **プロキシ環境の方へ：** 企業 VPN/プロキシ環境下で初回呼び出しが失敗する場合：
+   ```bash
+   # プロキシを解除してモデルをダウンロード
+   unset all_proxy ALL_PROXY
+   uv run python -m bugvault.main  # ダウンロードを開始
+   ```
+   モデルが `~/.cache/fastembed/` にキャッシュされたら、プロキシを再有効化してください。
+4. **言語は気にしない：** Embedding モデル（`BAAI/bge-small-zh-v1.5`）は日中英対応のバイリンガルモデルです。日本語で説明しても問題なく動作します。
 
 ### デプロイの確認
 
-1. Claude Code または Claude Desktop で会話を開始
-2. Claude にテストレコードを保存させる
-3. Claude にそのレコードを検索させる
+MCP クライアントを再起動したら、以下の手順で確認してください：
+
+**1. テストレコードを保存：**
+> "Save a test bug record: title is 'test deployment', error is 'ConnectionError: timeout', tried restarting the service, final solution was increasing the timeout."
+
+**2. 検索：**
+> "I ran into a connection timeout issue before — can you check my past bug records?"
 
 デプロイが成功していれば、Claude が MCP ツールを呼び出して結果を返します。
+
+**Claude が「ツールがありません」と言った場合**：
+- まず `/mcp` でステータスを確認（Claude Code）
+- 設定 JSON のパスを再確認
+- 以下の手動テストを試す
 
 ### 手動テスト
 

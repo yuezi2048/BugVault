@@ -126,9 +126,20 @@ Once configured, Claude can use two additional tools:
 
 BugVault communicates via MCP's **stdio transport** — it runs as a subprocess of your MCP client. There is no HTTP server to start, no port to configure.
 
-#### Configure Claude Code CLI
+### Configuration
 
-Claude Code reads MCP server configurations from `~/.claude/settings.json`. Add BugVault as an entry under `mcpServers`:
+#### File Location
+
+MCP server configuration is a JSON file. The location depends on your client:
+
+| Client | Config File Path |
+|--------|-----------------|
+| **Claude Code (CLI)** | `~/.claude/settings.json` |
+| **Claude Desktop** | **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`<br>**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`<br>**Linux:** `~/.config/Claude/claude_desktop_config.json` |
+
+#### Configuration Content
+
+Add BugVault as an entry under `mcpServers`:
 
 ```json
 {
@@ -146,48 +157,65 @@ Claude Code reads MCP server configurations from `~/.claude/settings.json`. Add 
 ```
 
 > **Important:** Use **absolute paths** for both the `uv` binary and the project directory. Do not use `~` or relative paths.
+>
+> 💡 Run `which uv` (macOS/Linux) or `where uv` (Windows) to find the exact path to `uv`.
 
-After adding the config, restart Claude Code. The server starts **lazily** — it only launches when you first invoke one of its tools (`save_bug_experience` or `retrieve_bug_experience`). The initial cold start takes ~3–5 seconds as it downloads/loads the embedding model and connects to LanceDB.
+### Using the `/mcp` Command (Claude Code)
 
-You can verify the server is running by checking Claude Code's MCP server list:
+After editing `~/.claude/settings.json`, restart Claude Code entirely (not just `/mcp` — closing and reopening the terminal suffices). Then type:
 
 ```
 /mcp
 ```
 
-#### Configure Claude Desktop
+This lists all configured MCP servers with one of three statuses:
 
-Add to `claude_desktop_config.json`:
+| Status | Meaning |
+|--------|---------|
+| **running** ✅ | Server is active and ready |
+| **not running** ⏸️ | Normal — BugVault uses **lazy loading** (see below) |
+| **error** ❌ | Server failed to start — paths are likely wrong |
 
-```json
-{
-  "mcpServers": {
-    "bugvault": {
-      "command": "/path/to/uv",
-      "args": [
-        "run",
-        "--directory", "/absolute/path/to/bugvault",
-        "python", "-m", "bugvault.main"
-      ]
-    }
-  }
-}
-```
+> **Lazy loading:** BugVault only starts when you first call one of its tools (`save_bug_experience` or `retrieve_bug_experience`). Seeing "not running" is expected. After the first tool invocation, `/mcp` will show "running".
+>
+> **Don't panic on first call:** The initial cold start takes **3–5 seconds** (downloading/loading the embedding model + connecting to LanceDB). This is normal — subsequent calls are instant.
 
-Locations for `claude_desktop_config.json`:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+If the status shows **"error"**, the most common cause is an incorrect path. Double-check:
+- `which uv` gives the correct absolute path
+- The `--directory` argument points to the BugVault project root (where `pyproject.toml` lives)
+- You didn't use `~` or `$HOME` — expand them to the full path
+
+> **Note:** `/mcp stop`, `/mcp restart`, and similar subcommands are **not available** in all versions of Claude Code. If they don't work, simply restart the terminal or the Claude Desktop app.
+
+### First-Time Startup Tips
+
+1. **Restart is mandatory** — Claude Code and Claude Desktop only read the config file at startup. Closing and reopening is required after editing `settings.json`.
+2. **First tool call is slow (~3–5s)** — the embedding model (90 MB) downloads on first use if not cached. The server logs progress to stderr, which is invisible in Claude Code but visible when running manually.
+3. **Proxy users:** If behind a corporate VPN/proxy and the first call fails:
+   ```bash
+   # Start without proxy for the initial model download
+   unset all_proxy ALL_PROXY
+   uv run python -m bugvault.main  # triggers download
+   ```
+   After the model is cached at `~/.cache/fastembed/`, re-enable your proxy.
+4. **Language mismatch:** If you're using an English Claude but storing Chinese bug records, BugVault handles both — the embedding model (`BAAI/bge-small-zh-v1.5`) is bilingual. Just describe your needs naturally.
 
 ### Verify the Deployment
 
-1. **Start a conversation** in Claude Code or Claude Desktop
-2. **Ask Claude to save a test record:**
-   > "帮我保存一条测试 Bug 记录：标题是 'test deployment'，报错是 'ConnectionError: timeout'，尝试过重启服务，最终方案是增加超时时间"
-3. **Ask Claude to retrieve it:**
-   > "我遇到过 connection timeout 的问题，帮我查一下 BugVault 里的历史记录"
+After restarting your MCP client, try these progressively to confirm everything works:
+
+**1. Save a test record:**
+> "Save a test bug record: title is 'test deployment', error is 'ConnectionError: timeout', tried restarting the service, final solution was increasing the timeout."
+
+**2. Retrieve it:**
+> "I ran into a connection timeout issue before — can you check my past bug records?"
 
 If deployment succeeds, Claude will call the MCP tools and return results.
+
+**If Claude says "I don't have access to that tool"** or nothing happens:
+- Check `/mcp` status first (Claude Code)
+- Re-read the paths in your config JSON
+- Try the manual test below
 
 ### Manual Testing
 

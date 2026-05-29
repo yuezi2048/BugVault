@@ -33,3 +33,6 @@ integration_test.log
 # BugVault data directories — uncomment if you store them in-tree
 # data/
 # lancedb/
+
+# Reasonix Code assistant runtime artifacts
+.reasonix/

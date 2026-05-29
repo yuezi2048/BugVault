@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BugRecord(BaseModel):
@@ -60,6 +60,13 @@ class BugRecord(BaseModel):
     ] = None
 
     # ── System-managed metadata ─────────────────────────────────────
+    record_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="MD5(bug_title + error_log_snippet) — globally unique dedup key",
+        ),
+    ]
     create_time: Annotated[
         str,
         Field(default_factory=lambda: datetime.now(timezone.utc).isoformat()),
@@ -78,6 +85,17 @@ class BugRecord(BaseModel):
         import re as _re
         cleaned = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", v)
         return cleaned.strip()
+
+    # ── Model validators ────────────────────────────────────────────
+
+    @model_validator(mode="after")
+    def _compute_record_id(self) -> "BugRecord":
+        """Compute MD5(bug_title + error_log_snippet) as the global dedup key."""
+        import hashlib
+
+        raw = (self.bug_title + self.error_log_snippet).encode("utf-8")
+        self.record_id = hashlib.md5(raw).hexdigest()
+        return self
 
     # ── Public API ──────────────────────────────────────────────────
 

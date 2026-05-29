@@ -100,7 +100,7 @@ Once configured, Claude can use two additional tools:
 │  ┌─────────────▼──────────────────────▼────────────┐  │
 │  │  database/  (Persistence)                       │  │
 │  │  ┌──────────────────┐  ┌────────────────────┐   │  │
-│  │  │ LanceDB          │  │ Markdown Archive   │   │  │
+│  │  │ LanceDBClient    │  │ Markdown Archive   │   │  │
 │  │  │ (vector + meta)  │  │ (human-readable)   │   │  │
 │  │  └──────────────────┘  └────────────────────┘   │  │
 │  └─────────────────────────────────────────────────┘  │
@@ -122,7 +122,40 @@ Once configured, Claude can use two additional tools:
 
 ## Usage
 
-### Configure Claude Desktop
+### Deploy as an MCP Server
+
+BugVault communicates via MCP's **stdio transport** — it runs as a subprocess of your MCP client. There is no HTTP server to start, no port to configure.
+
+#### Configure Claude Code CLI
+
+Claude Code reads MCP server configurations from `~/.claude/settings.json`. Add BugVault as an entry under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "bugvault": {
+      "command": "/path/to/uv",
+      "args": [
+        "run",
+        "--directory", "/absolute/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}
+```
+
+> **Important:** Use **absolute paths** for both the `uv` binary and the project directory. Do not use `~` or relative paths.
+
+After adding the config, restart Claude Code. The server starts **lazily** — it only launches when you first invoke one of its tools (`save_bug_experience` or `retrieve_bug_experience`). The initial cold start takes ~3–5 seconds as it downloads/loads the embedding model and connects to LanceDB.
+
+You can verify the server is running by checking Claude Code's MCP server list:
+
+```
+/mcp
+```
+
+#### Configure Claude Desktop
 
 Add to `claude_desktop_config.json`:
 
@@ -133,7 +166,7 @@ Add to `claude_desktop_config.json`:
       "command": "/path/to/uv",
       "args": [
         "run",
-        "--directory", "/path/to/bugvault",
+        "--directory", "/absolute/path/to/bugvault",
         "python", "-m", "bugvault.main"
       ]
     }
@@ -141,14 +174,138 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
+Locations for `claude_desktop_config.json`:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+### Verify the Deployment
+
+1. **Start a conversation** in Claude Code or Claude Desktop
+2. **Ask Claude to save a test record:**
+   > "帮我保存一条测试 Bug 记录：标题是 'test deployment'，报错是 'ConnectionError: timeout'，尝试过重启服务，最终方案是增加超时时间"
+3. **Ask Claude to retrieve it:**
+   > "我遇到过 connection timeout 的问题，帮我查一下 BugVault 里的历史记录"
+
+If deployment succeeds, Claude will call the MCP tools and return results.
+
 ### Manual Testing
 
 ```bash
-# Start the server directly
-uv run python -m bugvault.main
+# Start the server directly (with combined stdout/stderr for debugging)
+uv run python -m bugvault.main 2>&1
+
+# Run the unit tests
+uv run pytest tests/test_core.py -v
 
 # Run the E2E protocol test (spawns server subprocess)
-uv run python tests/test_mcp_protocol.py
+uv run pytest tests/test_integration.py -v -m e2e
+```
+
+---
+
+## Deployment Troubleshooting
+
+### Common Errors and Solutions
+
+#### 1. `[MCP Error] CONNECTION_CLOSED` or `Connection closed`
+
+**Cause:** The server process crashed during startup — typically during embedding model loading or LanceDB initialization.
+
+**Diagnosis:**
+```bash
+# Start server manually and watch for errors
+uv run python -m bugvault.main 2>&1
+```
+
+**Solutions:**
+- Ensure `uv sync` completed successfully
+- Check that Python version is 3.13+: `python --version`
+- Verify network access for first-time model download (fastembed downloads `BAAI/bge-small-zh-v1.5` on first run)
+- If behind a proxy: `unset all_proxy ALL_PROXY`
+
+#### 2. Table / DB already exists error
+
+```
+ValueError: Table 'bug_records' already exists
+```
+
+**Cause:** Run multiple times without proper cleanup; LanceDB table already created from a prior session.
+
+**Solution:** The server now handles this gracefully by opening existing tables. If you see this, ensure you're running the latest code and the table existence check is working correctly:
+```bash
+git pull
+uv sync
+```
+
+To reset from scratch:
+```bash
+rm -rf ~/.bugvault/lancedb/bug_records*
+```
+
+#### 3. Server starts but tools don't appear in Claude Code
+
+**Cause:** Claude Code only discovers tools after the server successfully responds to an `initialize` handshake. A crash before that handshake means no tools are registered.
+
+**Diagnosis:**
+- Run `/mcp` in Claude Code to see registered MCP servers
+- If BugVault shows "error" or "not running", check the MCP log: `cat ~/.claude/logs/*.log`
+- Run the server manually to confirm it starts without errors: `uv run python -m bugvault.main 2>&1 | head -20`
+
+**Common causes:**
+- **Incorrect `uv` path:** Use `which uv` to find the absolute path; don't use `~/.local/bin/uv` if uv is elsewhere
+- **Relative project path:** The `--directory` argument must be an absolute path
+- **Working directory mismatch:** The server's `cwd` must be the BugVault project root
+
+#### 4. Embedding model download fails
+
+```
+ConnectionError: HTTPSConnectionPool ... Name or service not known
+```
+
+**Solutions:**
+- First-time download requires internet access (~90 MB model file)
+- Set `BUGVAULT_EMBEDDING_MODEL` to a different model if the default is inaccessible
+- Cache location: `~/.cache/fastembed/` — once downloaded, offline use works
+- If using a proxy: unset proxy variables during first download, then re-enable
+
+#### 5. ImportError: cannot import name '...' from 'bugvault...'
+
+**Cause:** The Python package structure doesn't include the new `database/` or `mcp_tools/` subpackages.
+
+**Solution:** Ensure all `__init__.py` files exist (they do in this project). If you're running from a different directory, set `PYTHONPATH` correctly:
+```bash
+cd /absolute/path/to/bugvault
+PYTHONPATH=src uv run python -m bugvault.main
+```
+
+#### 6. LanceDB / PyArrow version mismatch
+
+```
+ValueError: The LanceDB table has not been created with the same schema
+```
+
+**Solution:** LanceDB tables are schema-locked. If the schema changes during development, delete old data:
+```bash
+rm -rf ~/.bugvault/lancedb
+uv run pytest tests/test_integration.py -v -m e2e  # re-creates table
+```
+
+### Debugging Checklist
+
+```
+□ uv sync completed without errors
+□ Python 3.13+ is active (python --version)
+□ uv path is absolute (which uv)
+───
+□ ~/.claude/settings.json uses absolute paths
+□ --directory points to the project root containing pyproject.toml
+───
+□ First-time model download has internet access
+□ ~/.bugvault/lancedb is writable
+───
+□ uv run python -m bugvault.main   starts without errors
+□ uv run pytest tests/ -v          all tests pass
 ```
 
 ---
@@ -162,15 +319,17 @@ bugvault/
 ├── README.md
 ├── src/
 │   └── bugvault/
-│       ├── main.py              # MCP server entry point
+│       ├── main.py              # MCP server entry point (~70 lines)
 │       ├── config.py            # Pydantic settings (env-based)
 │       ├── models/
 │       │   └── bug_record.py    # BugRecord data model
 │       ├── services/
 │       │   ├── retrieval_svc.py # ANN search + reranking + truncation
 │       │   └── ingestion_svc.py # Validation + probing + MD archive
-│       ├── database/            # LanceDB client (initialized in main.py)
-│       ├── mcp_tools/           # Tool definitions (facade layer)
+│       ├── database/
+│       │   └── lancedb_client.py# LanceDBClient OOP data access layer
+│       ├── mcp_tools/
+│       │   └── tools.py         # MCP tool registration + handlers
 │       └── utils/
 │           ├── stdout_guard.py  # MCP stdio transport protection
 │           ├── logger.py        # stderr-only logging
@@ -213,10 +372,7 @@ class BugRecord(BaseModel):
 uv run pytest tests/test_core.py -v
 
 # E2E protocol test (spawns real server subprocess, ~15s)
-uv run python tests/test_mcp_protocol.py
-
-# Integration test (save → retrieve round-trip)
-uv run pytest tests/test_integration.py -v -s
+uv run pytest tests/test_integration.py -v -m e2e
 
 # All tests
 uv run pytest tests/ -v
@@ -238,6 +394,33 @@ See [.env.example](.env.example) for all options.
 
 ---
 
+## How MCP Stdio Transport Works
+
+BugVault uses the **stdio transport** — the simplest MCP communication mode:
+
+```
+┌─────────────────────┐          JSON-RPC 2.0          ┌─────────────────────┐
+│   MCP Client        │  ──────────────────────────►   │   BugVault Server   │
+│  (Claude Code /     │  stdin (write to server)       │  (uv run python     │
+│   Claude Desktop)   │  ◄──────────────────────────   │   -m bugvault.main) │
+│                     │  stdout (read from server)     │                     │
+└─────────────────────┘                                └─────────────────────┘
+                                                              │ stderr (logs)
+                                                              ▼
+                                                        terminal / log file
+```
+
+Key points:
+- The MCP client **spawns** BugVault as a child process via `uv run python -m bugvault.main`
+- The client writes JSON-RPC requests to the server's **stdin**
+- The server writes JSON-RPC responses to its **stdout** (which the client reads)
+- **stderr is reserved for logging** — visible in your terminal but ignored by the MCP protocol
+- The `_MCPStdoutProxy` guard ensures that no accidental `print()` calls corrupt the protocol stream
+
+This is why running `uv run python -m bugvault.main 2>&1` shows logging output but no JSON-RPC traffic — the JSON is sent to stdout but only meaningful when a client is writing requests to stdin.
+
+---
+
 ## Design Decisions
 
 - **Why not LangChain?** BugVault's logic is linear CRUD + vector search. A framework adds abstraction without value. Native MCP SDK keeps the stack shallow and debuggable.
@@ -254,6 +437,9 @@ See [.env.example](.env.example) for all options.
 | Embedding model download fails behind proxy | `unset all_proxy ALL_PROXY` (fastembed uses direct HTTP) |
 | E2E test times out | First run downloads model (~1 min); subsequent runs are ~15s |
 | No output when starting server | Output goes to stderr — use `uv run python -m bugvault.main 2>&1` |
+| Tools not showing in Claude Code | Check absolute paths in `~/.claude/settings.json`; verify `uv run python -m bugvault.main` works |
+| "Connection closed" error | Server crashed during init — run manually with `2>&1` to see the traceback |
+| LanceDB schema mismatch after update | `rm -rf ~/.bugvault/lancedb` then restart |
 
 ---
 

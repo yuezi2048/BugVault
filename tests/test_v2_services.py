@@ -104,18 +104,27 @@ class TestRAGEvaluator:
     def test_parse_valid_json(self):
         from bugvault.services.rag_evaluator_svc import RAGEvaluator
 
-        raw = '{"rag_confidence_score": 8.5, "evaluation": "highly_relevant"}'
+        raw = (
+            '{"context_relevance": 4.0, "faithfulness": 3.5, '
+            '"justification": "Doc 2 is partially off-topic."}'
+        )
         result = RAGEvaluator._parse_response(raw)
-        assert result.rag_confidence_score == 8.5
-        assert result.evaluation == "highly_relevant"
+        assert result.rag_confidence_score == 7.5  # 4.0 + 3.5
+        assert result.context_relevance == 4.0
+        assert result.faithfulness == 3.5
+        assert "off-topic" in (result.evaluation or "")
 
     def test_parse_with_markdown_fences(self):
         from bugvault.services.rag_evaluator_svc import RAGEvaluator
 
-        raw = '```json\n{"rag_confidence_score": 7.0, "evaluation": "relevant"}\n```'
+        raw = (
+            '```json\n{"context_relevance": 3.0, "faithfulness": 4.0, '
+            '"justification": "Relevant but verbose."}\n```'
+        )
         result = RAGEvaluator._parse_response(raw)
-        assert result.rag_confidence_score == 7.0
-        assert result.evaluation == "relevant"
+        assert result.rag_confidence_score == 7.0  # 3.0 + 4.0
+        assert result.context_relevance == 3.0
+        assert result.faithfulness == 4.0
 
     def test_parse_invalid_json_returns_fallback(self):
         from bugvault.services.rag_evaluator_svc import RAGEvaluator

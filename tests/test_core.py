@@ -244,9 +244,25 @@ class TestRAGEvalResult:
         assert r.evaluation is None
 
     def test_full_result(self):
-        r = RAGEvalResult(rag_confidence_score=9.2, evaluation="highly_relevant")
-        assert r.rag_confidence_score == 9.2
-        assert r.evaluation == "highly_relevant"
+        r = RAGEvalResult(
+            context_relevance=4.5,
+            faithfulness=4.7,
+            justification="Both docs are on-topic and well-grounded.",
+        )
+        # rag_confidence_score is NOT auto-computed by Pydantic —
+        # it is set explicitly by _parse_response.  The model just
+        # stores what it receives.
+        r2 = RAGEvalResult(
+            rag_confidence_score=9.2,
+            evaluation="highly_relevant",
+            context_relevance=4.5,
+            faithfulness=4.7,
+            justification="Both docs are on-topic and well-grounded.",
+        )
+        assert r2.rag_confidence_score == 9.2
+        assert r2.evaluation == "highly_relevant"
+        assert r2.context_relevance == 4.5
+        assert r2.faithfulness == 4.7
 
 
 # ===================================================================

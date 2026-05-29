@@ -61,18 +61,34 @@ class RAGEvaluator:
             return RAGEvalResult()
 
         prompt = self._build_prompt(query, eval_candidates)
-        try:
-            raw = self._call_llm(prompt)
-            result = self._parse_response(raw)
-            self._persist_eval(query, eval_candidates, result)
-            return result
-        except Exception:
-            logger.exception("RAG evaluation failed (results returned without scores)")
-            self._persist_eval(
-                query, eval_candidates,
-                RAGEvalResult(rag_confidence_score=None, evaluation="error"),
-            )
-            return RAGEvalResult()
+
+        # Retry once on parse failure (exception or parse_error marker)
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                raw = self._call_llm(prompt)
+                result = self._parse_response(raw)
+
+                # If the LLM returned malformed JSON on first try, retry
+                if attempt == 0 and result.evaluation == "parse_error":
+                    logger.warning("RAG eval parse error on attempt 1, retrying…")
+                    continue
+
+                self._persist_eval(query, eval_candidates, result)
+                return result
+            except Exception:
+                if attempt == 0:
+                    logger.warning("RAG eval exception on attempt 1, retrying…")
+                    continue
+                logger.exception("RAG evaluation failed (results returned without scores)")
+                self._persist_eval(
+                    query, eval_candidates,
+                    RAGEvalResult(rag_confidence_score=None, evaluation="error"),
+                )
+                return RAGEvalResult()
+
+        # Safety fallback (should not be reached)
+        return RAGEvalResult()
 
     # ── internal helpers ────────────────────────────────────────────
 
@@ -92,16 +108,19 @@ class RAGEvaluator:
             {
                 "role": "system",
                 "content": (
-                    "You are a RAG evaluation assistant. Given a user query "
+                    "You are a strict RAG evaluation assistant. Given a user query "
                     "and retrieved documents, score the retrieval quality on "
-                    "two criteria (0-10 each):\n"
-                    "1. Context Relevance: Are the retrieved documents relevant "
-                    "to the query?\n"
-                    "2. Faithfulness: Is the extracted information faithful to "
-                    "the source documents?\n"
+                    "two independent criteria (0.0-5.0 each):\n"
+                    "1. context_relevance: How useful are the retrieved documents "
+                    "for answering this query? Deduct points for off-topic docs.\n"
+                    "2. faithfulness: Is the extracted information faithful to "
+                    "the source documents? Deduct points for hallucination.\n"
+                    "3. justification: A HARSH paragraph explaining every "
+                    "point deduction — be critical.\n"
                     "Return ONLY valid JSON with no markdown formatting:\n"
-                    '{"rag_confidence_score": <average_score_0_10>, '
-                    '"evaluation": "<brief assessment>"}'
+                    '{"context_relevance": <0.0-5.0>, '
+                    '"faithfulness": <0.0-5.0>, '
+                    '"justification": "<critical reasoning>"}'
                 ),
             },
             {
@@ -121,6 +140,7 @@ class RAGEvaluator:
                 },
                 json={
                     "model": self.model,
+                    "response_format": {"type": "json_object"},
                     "messages": messages,
                     "temperature": 0.1,
                     "max_tokens": 256,
@@ -131,7 +151,10 @@ class RAGEvaluator:
 
     @staticmethod
     def _parse_response(raw: str) -> RAGEvalResult:
-        """Extract ``RAGEvalResult`` from the LLM's JSON response.
+        """Extract ``RAGEvalResult`` from the LLM's tri-axis JSON response.
+
+        ``rag_confidence_score`` = ``context_relevance`` + ``faithfulness`` (0–10).
+        ``evaluation`` is an alias for ``justification``.
 
         Tolerates minor formatting variations (e.g. `````json`` fences).
         """
@@ -144,9 +167,19 @@ class RAGEvaluator:
 
         try:
             data = json.loads(text)
+            cr = float(data.get("context_relevance", 0.0))
+            fa = float(data.get("faithfulness", 0.0))
+            just = str(data.get("justification", ""))
+            # Clamp each axis to [0.0, 5.0]
+            cr = max(0.0, min(5.0, cr))
+            fa = max(0.0, min(5.0, fa))
+            total = cr + fa  # 0–10
             return RAGEvalResult(
-                rag_confidence_score=float(data.get("rag_confidence_score", 0)),
-                evaluation=str(data.get("evaluation", "")),
+                rag_confidence_score=total,
+                evaluation=just,
+                context_relevance=cr,
+                faithfulness=fa,
+                justification=just,
             )
         except (json.JSONDecodeError, ValueError, TypeError):
             logger.warning("Failed to parse RAG eval response: %s", raw[:200])
@@ -166,6 +199,9 @@ class RAGEvaluator:
             "query": query,
             "rag_confidence_score": result.rag_confidence_score,
             "evaluation": result.evaluation,
+            "context_relevance": result.context_relevance,
+            "faithfulness": result.faithfulness,
+            "justification": result.justification,
             "top_k_titles": [r.get("bug_title", "") for r in candidates],
         }
         try:

@@ -43,13 +43,32 @@ async def main() -> None:
         thread_name_prefix="bugvault-io",
     )
 
-    # ── Database layer (model warm-up + LanceDB connection) ────────
+    # ── Database layer (LanceDB connection — no embedder) ──────────
     db = LanceDBClient()
     db.initialize()
 
+    # ── Embedding service (optional, required for async hook) ──────
+    embedding_svc = None
+    if settings.enable_async_embedding:
+        from bugvault.services.embedding_svc import EmbeddingService  # slow import
+
+        embedding_svc = EmbeddingService()
+
+    # ── Reflection service (optional) ──────────────────────────────
+    reflection_svc = None
+    if settings.enable_reflection_tool:
+        from bugvault.services.reflection_svc import ReflectionService
+
+        reflection_svc = ReflectionService()
+
+    # ── RAG evaluator (optional, configured via env) ───────────────
+    from bugvault.services.rag_evaluator_svc import RAGEvaluator
+
+    rag_evaluator = RAGEvaluator()
+
     # ── MCP server + tool registration ─────────────────────────────
     server = Server(settings.server_name)
-    register_tools(server, db, executor)
+    register_tools(server, db, embedding_svc, reflection_svc, rag_evaluator, executor)
 
     # ── Enter MCP stdio event loop ─────────────────────────────────
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

@@ -20,6 +20,16 @@ build/
 .DS_Store
 Thumbs.db
 
+# Machine-specific MCP server config (contains absolute paths)
+.claude/settings.json
+.claude/settings.local.json
+
+# Test artifacts
+integration_test.log
+
+# Claude project memories
+.claude/memory/
+
 # BugVault data directories — uncomment if you store them in-tree
 # data/
 # lancedb/

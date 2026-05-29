@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     server_name: str = "bugvault"
     server_version: str = "0.1.0"
 
+    # ── Async persistence ───────────────────────────────────────────
+    enable_async_embedding: bool = True  # background embedding + LanceDB
+
+    # ── RAG Evaluation (optional external judge LLM) ────────────────
+    enable_rag_eval: bool = False
+    eval_llm_api_key: str = ""
+    eval_llm_model: str = "gpt-4o-mini"
+    eval_llm_base_url: str = ""  # defaults to OpenAI
+    eval_top_k: int = 3  # evaluate top N retrieved records
+
+    # ── Reflection Tool ─────────────────────────────────────────────
+    enable_reflection_tool: bool = True
+
     def model_post_init(self, _ctx) -> None:
         if not self.db_uri:
             self.db_uri = str(self.data_root / "lancedb")

@@ -1,77 +1,79 @@
 """LanceDB client — data access layer for BugVault.
 
-Encapsulates embedding-model loading, LanceDB connection lifecycle,
-vector search, and record insertion behind a clean OOP interface.
+Encapsulates LanceDB connection lifecycle, vector search, and record
+insertion behind a clean OOP interface.
+
+This layer does NOT own the embedding model — callers must provide
+pre-computed embeddings via ``search()`` and ``upsert_record()``.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import lancedb
 import pyarrow as pa
-from fastembed import TextEmbedding
 
 from bugvault.config import settings
 from bugvault.models.bug_record import BugRecord
-from bugvault.services.ingestion_svc import record_to_markdown
 from bugvault.utils.logger import logger
 
 
 class LanceDBClient:
-    """OOP wrapper around LanceDB and fastembed.
+    """OOP wrapper around LanceDB.
 
     Usage
     -----
         client = LanceDBClient()
-        client.initialize()          # warm model + open table
-        rows = client.search("some error")
-        client.insert(record)
+        client.initialize()
+        rows = client.search(query_embedding)
+        client.upsert_record(search_text, emb, record)
     """
 
     TABLE_NAME = "bug_records"
 
     def __init__(self) -> None:
         self._table = None
-        self._embedder: TextEmbedding | None = None
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
     def initialize(self) -> None:
-        """Warm up the embedding model and open (or create) the LanceDB table.
+        """Open (or create) the LanceDB table.
 
-        Called once during server startup so that subsequent tool
-        invocations pay no cold-start penalty.
+        Called once during server startup.  Embedding-model warm-up is
+        handled separately by ``EmbeddingService``.
         """
-        self._init_embedder()
         self._init_table()
 
     @property
     def is_ready(self) -> bool:
-        return self._embedder is not None and self._table is not None
+        return self._table is not None
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def search(self, query: str) -> list[dict]:
-        """Embed *query* and perform ANN search.
+    def search(self, embedding: list[float]) -> list[dict]:
+        """Perform ANN search with a pre-computed *embedding*.
 
         Returns raw rows from LanceDB (list of dicts).
         """
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
-        emb = list(self._embedder.embed([query]))[0].tolist()  # type: ignore[union-attr]
-        return self._table.search(emb).limit(settings.top_k).to_list()  # type: ignore[union-attr]
+        return self._table.search(embedding).limit(settings.top_k).to_list()  # type: ignore[union-attr]
 
-    def insert(self, record: BugRecord) -> None:
-        """Build search text, embed, write to LanceDB, and archive as markdown."""
+    def upsert_record(
+        self,
+        search_text: str,
+        embedding: list[float],
+        record: BugRecord,
+    ) -> None:
+        """Write a single record (with its pre-computed *embedding*) to LanceDB.
+
+        Markdown archiving is NOT handled here — callers should use
+        ``archive_svc.write_markdown_archive()`` separately.
+        """
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
 
-        search_text = record.to_search_text()
-        emb = list(self._embedder.embed([search_text]))[0].tolist()  # type: ignore[union-attr]
-
         self._table.add([{  # type: ignore[union-attr]
-            "vector": emb,
+            "vector": embedding,
             "bug_title": record.bug_title,
             "error_log_snippet": record.error_log_snippet,
             "tried_methods": record.tried_methods,
@@ -85,26 +87,7 @@ class LanceDBClient:
 
         logger.info("Saved bug record: %s", record.bug_title)
 
-        # ── Markdown archive (non-critical, best-effort) ──────────
-        try:
-            md_dir = Path(settings.markdown_archive_dir)
-            md_dir.mkdir(parents=True, exist_ok=True)
-            md_path = md_dir / f"{record.create_time[:10]}_{record.bug_title[:40]}.md"
-            md_path.write_text(record_to_markdown(record), encoding="utf-8")
-        except Exception:
-            logger.exception("Failed to write markdown archive")
-
     # ── Internal helpers ────────────────────────────────────────────
-
-    def _init_embedder(self) -> None:
-        logger.info("Loading embedding model: %s", settings.embedding_model)
-        self._embedder = TextEmbedding(
-            model_name=settings.embedding_model,
-            max_length=512,
-        )
-        # Warm-up: one dummy embedding pre-compiles the ONNX graph
-        list(self._embedder.embed(["warmup"]))
-        logger.info("Embedding model loaded and warmed up")
 
     def _init_table(self) -> None:
         db = lancedb.connect(settings.db_uri)

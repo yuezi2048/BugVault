@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from bugvault.models.bug_record import BugRecord
+from bugvault.models.reflection_rule import PreventionRule
+from bugvault.models.rag_eval_result import RAGEvalResult
+from bugvault.services.archive_svc import (
+    _clean_timestamp,
+    _clean_tech_stack,
+    _strip_llm_prefix,
+    record_to_markdown,
+    write_markdown_archive,
+)
 from bugvault.services.retrieval_svc import time_decay_score
 from bugvault.utils.text_utils import StackTraceTruncator
 
@@ -188,3 +198,145 @@ class TestTimeDecayScore:
 
     def test_invalid_date_is_neutral(self):
         assert time_decay_score("not-a-date") == 0.5
+
+
+# ===================================================================
+#  PreventionRule model
+# ===================================================================
+
+class TestPreventionRule:
+    def test_minimal_valid(self):
+        rule = PreventionRule(
+            rule_number=1,
+            error_category="code_logic_error",
+            preventive_rule="Always check for None before .get()",
+            reflection_text="Forgot that dict.get() can return None",
+            created_at="2026-01-01 12:00 UTC",
+        )
+        assert rule.rule_number == 1
+        assert rule.error_category == "code_logic_error"
+
+    def test_error_category_enum_values(self):
+        valid = {
+            "understanding_bias",
+            "code_logic_error",
+            "api_misuse",
+            "environment_issue",
+            "other",
+        }
+        for cat in valid:
+            r = PreventionRule(
+                rule_number=1, error_category=cat,
+                preventive_rule="x", reflection_text="x",
+                created_at="now",
+            )
+            assert r.error_category == cat
+
+
+# ===================================================================
+#  RAGEvalResult model
+# ===================================================================
+
+class TestRAGEvalResult:
+    def test_empty_defaults(self):
+        r = RAGEvalResult()
+        assert r.rag_confidence_score is None
+        assert r.evaluation is None
+
+    def test_full_result(self):
+        r = RAGEvalResult(rag_confidence_score=9.2, evaluation="highly_relevant")
+        assert r.rag_confidence_score == 9.2
+        assert r.evaluation == "highly_relevant"
+
+
+# ===================================================================
+#  Archive service helpers
+# ===================================================================
+
+class TestArchiveHelpers:
+    def test_clean_timestamp_utc(self):
+        result = _clean_timestamp("2026-05-29T10:27:15+00:00")
+        assert result == "2026-05-29T10:27:15+00:00"
+
+    def test_clean_timestamp_naive(self):
+        result = _clean_timestamp("2026-05-29T10:27:15")
+        assert result == "2026-05-29T10:27:15+00:00"
+
+    def test_clean_timestamp_invalid(self):
+        assert _clean_timestamp("garbage") == "garbage"
+
+    def test_clean_tech_stack_none(self):
+        assert _clean_tech_stack(None) == ["bug"]
+
+    def test_clean_tech_stack_empty(self):
+        assert _clean_tech_stack("") == ["bug"]
+
+    def test_clean_tech_stack_mixed(self):
+        result = _clean_tech_stack("Python 3.13, FastAPI，LanceDB")
+        assert result == ["Python 3.13", "FastAPI", "LanceDB"]
+
+    def test_strip_llm_prefix(self):
+        result = _strip_llm_prefix(
+            "root_cause: The issue was a race condition",
+            "root_cause",
+        )
+        assert result == "The issue was a race condition"
+
+    def test_strip_llm_prefix_no_match(self):
+        result = _strip_llm_prefix("Just some text", "root_cause")
+        assert result == "Just some text"
+
+
+class TestRecordToMarkdown:
+    def test_basic_structure(self):
+        record = BugRecord(
+            bug_title="test bug",
+            error_log_snippet="ValueError: x",
+            tried_methods="restart",
+            final_solution="fix config",
+            project_name="demo",
+            tech_stack="Python",
+        )
+        md = record_to_markdown(record)
+        assert "---" in md
+        assert "test bug" in md
+        assert "ValueError: x" in md
+        assert "restart" in md
+        assert "fix config" in md
+        assert "demo" in md
+
+    def test_with_root_cause(self):
+        record = BugRecord(
+            bug_title="bug with root cause",
+            error_log_snippet="err",
+            tried_methods="x",
+            final_solution="y",
+            root_cause="design flaw",
+        )
+        md = record_to_markdown(record)
+        assert "设计 flaw" in md or "design flaw" in md
+
+    def test_without_root_cause(self):
+        record = BugRecord(
+            bug_title="simple bug",
+            error_log_snippet="err",
+            tried_methods="x",
+            final_solution="y",
+        )
+        md = record_to_markdown(record)
+        assert "根因分析" not in md
+
+
+class TestWriteMarkdownArchive:
+    def test_write_to_temp_dir(self, tmp_path: Path):
+        record = BugRecord(
+            bug_title="archive test",
+            error_log_snippet="oops",
+            tried_methods="retry",
+            final_solution="patch",
+        )
+        out = write_markdown_archive(record)
+        assert out.exists()
+        content = out.read_text(encoding="utf-8")
+        assert "archive test" in content
+        assert "oops" in content

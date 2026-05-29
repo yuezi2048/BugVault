@@ -343,13 +343,21 @@ def _sync_retrieve(db, embedding_svc, rag_evaluator, query: str) -> list[types.T
     results = db.search(query_emb)
 
     if not results:
+        logger.info("Retrieve: no results for query '%s'", query[:80])
         return [types.TextContent(
             type="text",
             text="No matching bug experiences found in the knowledge base.",
         )]
 
+    logger.info("Retrieve: %d raw ANN results for query '%s'", len(results), query[:80])
+
     # ── hybrid rerank (semantic × recency) ─────────────────────────
+    pre_count = len(results)
     results = rerank(results, None)
+    after_count = len(results)
+    if after_count < pre_count:
+        logger.info("Retrieve: threshold filter dropped %d docs (%d → %d)",
+                     pre_count - after_count, pre_count, after_count)
 
     # ── format results ─────────────────────────────────────────────
     lines: list[str] = []
@@ -370,6 +378,10 @@ def _sync_retrieve(db, embedding_svc, rag_evaluator, query: str) -> list[types.T
         try:
             eval_result = rag_evaluator.evaluate_sync(query, results)
             if eval_result.rag_confidence_score is not None:
+                logger.info("Retrieve RAG eval: score=%.1f/10 cr=%.1f fa=%.1f",
+                            eval_result.rag_confidence_score,
+                            eval_result.context_relevance or 0,
+                            eval_result.faithfulness or 0)
                 lines.append("--- RAG Evaluation ---")
                 lines.append(f"Confidence: {eval_result.rag_confidence_score:.1f}/10")
                 lines.append(f"Assessment: {eval_result.evaluation}")

@@ -1,118 +1,67 @@
-"""Integration tests for BugVault MCP tools: save + retrieve."""
+"""Integration tests for BugVault MCP tools — save + retrieve.
+
+Uses the official ``mcp.client.stdio.stdio_client`` transport and
+``ClientSession`` for proper JSON-RPC 2.0 framing, eliminating the
+earlier subprocess/Popen deadlock-prone approach.
+"""
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
-import threading
-import time
 
 import pytest
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
+@pytest.mark.anyio
 @pytest.mark.e2e
-def test_save_and_retrieve():
-    """Start server, save a bug record, retrieve it, verify round-trip."""
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "bugvault.main"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+async def test_save_and_retrieve() -> None:
+    """Start server via stdio_client, save a bug record, retrieve it, verify round-trip."""
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "bugvault.main"],
         cwd="/home/ljy/Documents/myprogram/my-demo/BugVault",
-        text=True,
     )
 
-    assert proc.stdin is not None
-    assert proc.stdout is not None
-    assert proc.stderr is not None
+    async with stdio_client(server_params) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            # ── 1. Initialize handshake ─────────────────────────────
+            init_result = await session.initialize()
+            assert init_result.serverInfo.name == "bugvault"
 
-    stderr_lines: list[str] = []
-    def _drain() -> None:
-        for line in proc.stderr:
-            stderr_lines.append(line)
-    threading.Thread(target=_drain, daemon=True).start()
+            # ── 2. Save a bug record ────────────────────────────────
+            save_result = await session.call_tool(
+                "save_bug_experience",
+                arguments={
+                    "bug_title": "integration test bug",
+                    "error_log_snippet": "KeyError: 'missing_key'",
+                    "tried_methods": "restarted the server, cleared cache",
+                    "final_solution": "added fallback default value",
+                    "project_name": "bugvault-test",
+                },
+            )
+            assert not save_result.isError, (
+                f"Save failed: {save_result.content}"
+            )
+            save_text = " ".join(
+                c.text for c in save_result.content if hasattr(c, "text")
+            )
+            assert "saved successfully" in save_text.lower(), (
+                f"Unexpected save response: {save_text}"
+            )
 
-    try:
-        # Wait for init
-        time.sleep(12.0)
-
-        # 1. Initialize
-        proc.stdin.write(
-            '{"jsonrpc":"2.0","id":1,"method":"initialize",'
-            '"params":{"protocolVersion":"2024-11-05","capabilities":{},'
-            '"clientInfo":{"name":"test","version":"1"}}}\n'
-        )
-        proc.stdin.flush()
-        init_out = ""
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                break
-            init_out += line
-            if "serverInfo" in line:
-                break
-
-        # 2. Initialized notification
-        proc.stdin.write(
-            '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n'
-        )
-        proc.stdin.flush()
-
-        # 3. Save a bug record
-        save_msg = (
-            '{"jsonrpc":"2.0","id":2,"method":"tools/call",'
-            '"params":{"name":"save_bug_experience","arguments":{'
-            '"bug_title":"integration test bug",'
-            '"error_log_snippet":"KeyError: \'missing_key\'",'
-            '"tried_methods":"restarted the server, cleared cache",'
-            '"final_solution":"added fallback default value",'
-            '"project_name":"bugvault-test"}}}\n'
-        )
-        proc.stdin.write(save_msg)
-        proc.stdin.flush()
-
-        save_out = ""
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                break
-            save_out += line
-            if "saved successfully" in line.lower() or "result" in line:
-                break
-
-        assert "saved successfully" in save_out.lower() or '"result"' in save_out, (
-            f"Save failed.\nstdout:\n{save_out}\nstderr:\n{''.join(stderr_lines[-20:])}"
-        )
-
-        # 4. Retrieve
-        retrieve_msg = (
-            '{"jsonrpc":"2.0","id":3,"method":"tools/call",'
-            '"params":{"name":"retrieve_bug_experience","arguments":{'
-            '"query":"KeyError missing_key"}}}\n'
-        )
-        proc.stdin.write(retrieve_msg)
-        proc.stdin.flush()
-
-        retr_out = ""
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                break
-            retr_out += line
-            if "--- Result" in line or '"result"' in line:
-                # Read a few more lines then stop
-                for _ in range(5):
-                    extra = proc.stdout.readline()
-                    if not extra:
-                        break
-                    retr_out += extra
-                break
-
-        assert "integration test bug" in retr_out or "--- Result" in retr_out, (
-            f"Retrieve did not return saved record.\nstdout:\n{retr_out}\nstderr:\n{''.join(stderr_lines[-20:])}"
-        )
-
-    finally:
-        proc.terminate()
-        proc.wait(timeout=10.0)
+            # ── 3. Retrieve ─────────────────────────────────────────
+            retrieve_result = await session.call_tool(
+                "retrieve_bug_experience",
+                arguments={"query": "KeyError missing_key"},
+            )
+            assert not retrieve_result.isError, (
+                f"Retrieve failed: {retrieve_result.content}"
+            )
+            retrieve_text = " ".join(
+                c.text for c in retrieve_result.content if hasattr(c, "text")
+            )
+            assert "integration test bug" in retrieve_text, (
+                f"Retrieve did not return saved record:\n{retrieve_text}"
+            )

@@ -69,15 +69,48 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/) (package manager)
 
-### Installation
+### Installation & Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/bugvault.git
 cd bugvault
 
-# Install dependencies (no GPU required)
+# Install dependencies (no GPU required, ONNX runs on CPU)
 uv sync
+
+# (Optional) Configure RAG judge LLM for quality evaluation
+cp .env.example .env
+# Edit .env — set BUGVAULT_ENABLE_RAG_EVAL=true and BUGVAULT_EVAL_LLM_API_KEY
+
+# Verify everything works (70+ tests)
+uv run pytest -v
+
+# (Optional) Seed the database with sample data
+uv run python scripts/rebuild_index.py --skip-clear
+```
+
+### Run the MCP Server
+
+Configure your MCP client (Claude Desktop, Claude Code, Cursor, etc.)
+to launch BugVault as a subprocess. The standard config entry:
+
+```json
+{
+  "mcpServers": {
+    "bugvault": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}
+```
+
+See [doc/01分析/05.交付形式.md](doc/01分析/05.交付形式.md) for detailed deployment instructions.
 
 # Run all 43 tests to verify
 uv run pytest -v
@@ -383,16 +416,20 @@ write_markdown_archive(record)                 # human-readable backup
 
 ---
 
-## Design Decisions
+## Tech Stack & Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| **Why not LangChain?** | Linear CRUD + vector search. A framework adds abstraction without value. |
-| **Why `threading.Lock`?** | LanceDB's Python `_table` is not thread-safe. Without explicit locking, `search()` can read stale snapshots after `merge_insert()` on another thread. |
-| **Why `mode='overwrite'`?** | LanceDB's `drop_table + create_table(mode='create')` leaves stale version references causing "file not found" errors. |
-| **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. |
-| **Why 0.55 semantic threshold?** | Corresponds to ANN cosine distance ~0.90 — empirically the boundary below which documents are universally irrelevant. |
-| **Why tri-axis RAGAS?** | A single score conflates "bad retrieval" with "hallucination". Three axes let Claude adjust trust: ignore off-topic results but trust faithful ones. |
+| Decision | Rationale | Reference |
+|----------|-----------|-----------|
+| **Why MCP over Skill/Plugin?** | "Write once, run everywhere" — any MCP client (Claude Desktop, Cursor, Windsurf) can use BugVault without per-platform adapters. Pure local `stdio` transport, no ports, no network. | [why-not-skill.md](doc/01分析/02.为什么不做成skill.md) |
+| **Why LanceDB over Chroma/FAISS?** | Zero-ops embedded database (like SQLite for vectors). In-process, no Docker. MVCC for lock-free concurrent reads/writes. Native FTS + metadata filtering via columnar storage. | [why-lancedb.md](doc/01分析/03.为什么选择LanceDB.md) |
+| **Why not LangChain/LangGraph?** | Linear CRUD + vector search — a framework adds abstraction without value. MCP is not an Agent framework; BugVault is a tool endpoint, not a reasoning loop. Full control over prompts and error handling. | [why-sdk.md](doc/01分析/04.为什么选择SDK.md) |
+| **Why fastembed ONNX over OpenAI embeddings?** | Local inference, zero API cost, offline-capable. ONNX runtime is CPU-only and already loaded for reranking — no GPU needed. | — |
+| **Why Cross-Encoder over ColBERT?** | ColBERT requires a separate PyTorch index (~1.5GB) + late interaction storage. For 20-candidate reranking, Cross-Encoder ONNX (80MB) is more accurate and zero new deps. | [ADR](doc/02设计/adr-cross-encoder-vs-colbert.md) |
+| **Why dual fallback on claim_level?** | Small LLMs (e.g. deepseek-v4-flash) frequently produce malformed JSON on complex CoT prompts. Quota + exception double fallback ensures RAG evaluation never crashes the retrieval pipeline. | [v1.1 architecture](doc/02设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
+| **Why Metadata Pre-filtering before ANN?** | Pure semantic search mixes Python `ModuleNotFoundError` with Java `ClassNotFoundException`. LanceDB's columnar `LOWER(tech_stack) LIKE '%python%'` filter reduces the candidate pool before vector search — negligible cost, eliminates cross-language hallucination. | [v1.1 architecture](doc/02设计/04.v1.1-architecture.md#三元数据预过滤) |
+| **Why RRF (rank-based) fusion not score-based?** | Vector distance and BM25 score have incommensurable scales — adding them directly is meaningless. RRF uses rank position (k=60), which is scale-agnostic and empirically robust. | [v1.1 architecture](doc/02设计/04.v1.1-architecture.md#1.2-rrf-融合) |
+| **Why `ThreadPoolExecutor` for I/O?** | MCP's `asyncio` event loop must never block. LanceDB table operations and embedding inference run in a dedicated thread pool, keeping the event loop responsive for concurrent requests. | — |
+| **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. | — |
 
 ---
 

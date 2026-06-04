@@ -86,8 +86,38 @@ BugVault はバグ修正ライフサイクル全体をカバーする 3 つの M
 git clone https://github.com/yourusername/bugvault.git
 cd bugvault
 uv sync
-uv run pytest -v  # 全 43 テスト通過
+
+#（オプション）RAG 評価用 LLM の設定
+cp .env.example .env
+# .env 編集 — BUGVAULT_ENABLE_RAG_EVAL=true と BUGVAULT_EVAL_LLM_API_KEY
+
+# 検証（70+ テスト）
+uv run pytest -v
+
+#（オプション）アーカイブから再構築
+uv run python scripts/rebuild_index.py --skip-clear
 ```
+
+### MCP サーバーの起動
+
+MCP クライアント（Claude Desktop、Claude Code、Cursor 等）の設定に以下を追加：
+
+```json
+{
+  "mcpServers": {
+    "bugvault": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}
+```
+
+詳細は [デプロイメントガイド](doc/01分析/05.交付形式.md) を参照。
 
 ---
 
@@ -248,9 +278,15 @@ uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
 
 ---
 
-## 設計判断
+## 技術スタック選定理由
 
-| 判断 | 理由 |
+| 判断 | 理由 | 参考 |
+|------|------|------|
+| **なぜ MCP なのか？** | "Write once, run everywhere" — あらゆる MCP クライアントで動作。ローカル stdio 通信、ポート不要、ネットワーク不要。 | [why-not-skill.md](doc/01分析/02.なぜskillではないのか.md) |
+| **なぜ LanceDB なのか？** | ゼロ運用の組込データベース（ベクトル版 SQLite）。MVCC でロックフリー同時実行。ネイティブ FTS + メタデータフィルタリング。 | [why-lancedb.md](doc/01分析/03.なぜLanceDBなのか.md) |
+| **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](doc/01分析/04.なぜSDKなのか.md) |
+| **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](doc/02設計/adr-cross-encoder-vs-colbert.md) |
+| **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](doc/02設計/04.v1.1-architecture.md) |
 |------|------|
 | **なぜ `threading.Lock` が必要？** | LanceDB の `_table` は並行アクセス時に最新バージョンを保証しない |
 | **なぜ `mode='overwrite'`？** | `drop_table + create_table` が古いバージョン参照を残し "file not found" の原因に |

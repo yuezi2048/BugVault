@@ -265,17 +265,25 @@ def _compute_record_id(self) -> "BugRecord":
 
 > Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-### 环境变量
+### 关键配置
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `BUGVAULT_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding 模型（中英双语） |
-| `BUGVAULT_TOP_K` | `5` | 最大检索结果数 |
+| `BUGVAULT_DATA_ROOT` | `~/.bugvault` | LanceDB + 归档根目录 |
 | `BUGVAULT_ENABLE_RAG_EVAL` | `false` | 启用 LLM 裁判评估 |
 | `BUGVAULT_EVAL_LLM_API_KEY` | `""` | 裁判 LLM API 密钥 |
 | `BUGVAULT_EVAL_LLM_MODEL` | `gpt-4o-mini` | 裁判模型名 |
+| `BUGVAULT_EVAL_LLM_BASE_URL` | `https://api.openai.com/v1` | 自定义 API 端点（兼容 OpenAI） |
+| `BUGVAULT_TOP_K` | `5` | 最大检索结果数 |
+| `BUGVAULT_ENABLE_FTS` | `true` | 启用全文搜索双路召回 |
+| `BUGVAULT_ENABLE_RERANKER` | `true` | 启用 Cross-Encoder 精排 |
+| `BUGVAULT_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-Encoder 模型名 |
+| `BUGVAULT_ENABLE_RECENCY_DECAY` | `false` | 时间衰减（默认关闭，旧 bug 同样权重） |
+| `BUGVAULT_MAX_CLAIM_EVALS_PER_SESSION` | `10` | Claim-level 熔断上限 |
 | `BUGVAULT_ENABLE_REFLECTION_TOOL` | `true` | 启用复盘工具 |
 | `BUGVAULT_THREAD_POOL_WORKERS` | `2` | 异步 I/O 线程数 |
+
+完整列表参见 [.env.example](.env.example)（20+ 项）。
 
 ---
 

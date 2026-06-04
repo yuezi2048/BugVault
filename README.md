@@ -358,20 +358,95 @@ Add BugVault as an MCP server in your client's config:
 
 > **Config locations:** Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
-### Environment Variables
+---
+
+## Data Models
+
+### 🐞 `BugRecord` — Saved/Retrieved Bug Experience
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bug_title` | `str` (1-256) | ✅ | Short descriptive title |
+| `error_log_snippet` | `str` (1-32768) | ✅ | Error message or stack trace |
+| `tried_methods` | `str` (1-8192) | ✅ | Methods already attempted |
+| `final_solution` | `str` (1-16384) | ✅ | The working fix |
+| `project_name` | `str \| None` | ❌ | Affected project or service |
+| `tech_stack` | `str \| None` | ❌ | Technology tags (e.g. "Python 3.13, Django") |
+| `root_cause` | `str \| None` | ❌ | Root cause analysis (≤4096 chars) |
+| `record_id` | `str \| None` | 🛠️ auto | MD5(`bug_title` + `error_log_snippet`) — dedup key |
+| `create_time` | `str` | 🛠️ auto | ISO-8601 UTC timestamp |
+
+### 📊 `RAGEvalResult` — Evaluation Output (all fields optional)
+
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `strategy_used` | `str` | `simple` / `claim_level` / `simple (fallback_from_error)` | Which strategy produced this result |
+| `rag_confidence_score` | `float \| None` | 0-10 | Combined: `faithfulness*5 + context_relevance` |
+| `context_relevance` | `float \| None` | 0.0-5.0 | How useful are the retrieved docs for the query? |
+| `faithfulness` | `float \| None` | 0.0-5.0 (simple) / 0.0-1.0 (claim_level) | % of claims supported by source docs |
+| `evaluation` | `str \| None` | — | Alias for `justification` |
+| `justification` | `str \| None` | — | Harsh reasoning explaining point deductions |
+| `claims_analysis` | `list[dict] \| None` | — | Claim-level: `[{claim, supported, reason}]` |
+| `suggested_action` | `str \| None` | `CONFIDENT` / `PARTIAL` / `CAUTION` / `INSUFFICIENT` | Structured guidance for the Agent |
+| `prompt_tokens` | `int \| None` | — | Tokens in the prompt sent to judge LLM |
+| `completion_tokens` | `int \| None` | — | Tokens in the completion from judge LLM |
+| `total_tokens` | `int \| None` | — | Total tokens consumed by the evaluation |
+
+### 🛠️ Tool: `retrieve_bug_experience` — Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | `string` | ✅ | — | Error message, stack trace, or bug description |
+| `eval_depth` | `enum` | ❌ | `"simple"` | `"none"` / `"simple"` / `"claim_level"` |
+| `target_tech_stack` | `string` | ❌ | — | Tech stack filter (e.g. `"Python"`), case-insensitive |
+| `target_project_name` | `string` | ❌ | — | Project name filter (e.g. `"order-svc"`), case-insensitive |
+
+**Return value:** A formatted text block containing:
+1. `--- Retrieval Info ---` — strategy used (hybrid / vector-only) + source counts
+2. `--- Result N ---` — one section per retrieved bug record (title, project, error, tried, solution, root cause)
+3. `--- RAG Evaluation ---` — confidence scores, token usage, claim analysis (if `eval_depth != "none"`)
+
+### 💾 Tool: `save_bug_experience` — Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `bug_title` | `string` | ✅ | Short descriptive title |
+| `error_log_snippet` | `string` | ✅ | Error message or stack trace |
+| `tried_methods` | `string` | ✅ | Methods already attempted |
+| `final_solution` | `string` | ✅ | The working fix |
+| `project_name` | `string` | ❌ | Affected project (optional) |
+| `tech_stack` | `string` | ❌ | Technology tags (optional) |
+| `root_cause` | `string` | ❌ | Root cause analysis (optional) |
+
+### 📝 Tool: `reflect_and_prevent_error` — Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `reflection_text` | `string` | ✅ | Detailed analysis of what caused the bug |
+| `error_category` | `enum` | ✅ | `understanding_bias` / `code_logic_error` / `api_misuse` / `environment_issue` / `other` |
+| `preventive_rule` | `string` | ✅ | Concise actionable rule to prevent recurrence |
+
+---
+
+## Key Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BUGVAULT_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding model (bilingual) |
-| `BUGVAULT_TOP_K` | `5` | Max retrieval results |
-| `BUGVAULT_ENABLE_RAG_EVAL` | `false` | Enable LLM judge evaluation |
+| `BUGVAULT_DATA_ROOT` | `~/.bugvault` | Root directory for LanceDB + markdown archive |
+| `BUGVAULT_ENABLE_RAG_EVAL` | `false` | Enable LLM judge RAG evaluation |
 | `BUGVAULT_EVAL_LLM_API_KEY` | `""` | API key for judge LLM |
 | `BUGVAULT_EVAL_LLM_MODEL` | `gpt-4o-mini` | Judge LLM model name |
-| `BUGVAULT_EVAL_LLM_BASE_URL` | `""` | Custom API endpoint |
+| `BUGVAULT_EVAL_LLM_BASE_URL` | `https://api.openai.com/v1` | Custom API endpoint (OpenAI-compatible) |
+| `BUGVAULT_TOP_K` | `5` | Max retrieval results |
+| `BUGVAULT_ENABLE_FTS` | `true` | Enable full-text search dual recall |
+| `BUGVAULT_ENABLE_RERANKER` | `true` | Enable Cross-Encoder reranking |
+| `BUGVAULT_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-Encoder model name |
+| `BUGVAULT_ENABLE_RECENCY_DECAY` | `false` | Time-decay reranking (off = old bugs rank equally) |
+| `BUGVAULT_MAX_CLAIM_EVALS_PER_SESSION` | `10` | Claim-level eval session cap (circuit breaker) |
 | `BUGVAULT_ENABLE_REFLECTION_TOOL` | `true` | Enable preventive rules tool |
 | `BUGVAULT_THREAD_POOL_WORKERS` | `2` | I/O threads for async save/retrieve |
 
-See [.env.example](.env.example) for all options.
+See [.env.example](.env.example) for the complete list (20+ options).
 
 ---
 

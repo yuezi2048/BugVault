@@ -255,15 +255,25 @@ def _compute_record_id(self) -> "BugRecord":
 
 > **設定場所：** Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
-### 環境変数
+### キー設定
 
 | 変数 | デフォルト値 | 説明 |
 |------|------------|------|
-| `BUGVAULT_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding モデル（日中英対応） |
-| `BUGVAULT_TOP_K` | `5` | 最大検索結果数 |
+| `BUGVAULT_DATA_ROOT` | `~/.bugvault` | LanceDB + アーカイブのルート |
 | `BUGVAULT_ENABLE_RAG_EVAL` | `false` | LLM 判定評価を有効化 |
 | `BUGVAULT_EVAL_LLM_API_KEY` | `""` | 判定 LLM の API キー |
+| `BUGVAULT_EVAL_LLM_MODEL` | `gpt-4o-mini` | 判定モデル名 |
+| `BUGVAULT_EVAL_LLM_BASE_URL` | `https://api.openai.com/v1` | カスタム API エンドポイント |
+| `BUGVAULT_TOP_K` | `5` | 最大検索結果数 |
+| `BUGVAULT_ENABLE_FTS` | `true` | 全文検索の二系統検索を有効化 |
+| `BUGVAULT_ENABLE_RERANKER` | `true` | Cross-Encoder 再ランクを有効化 |
+| `BUGVAULT_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-Encoder モデル名 |
+| `BUGVAULT_ENABLE_RECENCY_DECAY` | `false` | 時間減衰（デフォルト無効、古いバグも同等に評価） |
+| `BUGVAULT_MAX_CLAIM_EVALS_PER_SESSION` | `10` | Claim-level サーキットブレーカー上限 |
 | `BUGVAULT_ENABLE_REFLECTION_TOOL` | `true` | 振り返りツールを有効化 |
+| `BUGVAULT_THREAD_POOL_WORKERS` | `2` | 非同期 I/O スレッド数 |
+
+完全なリストは [.env.example](.env.example)（20+ 項目）を参照。
 
 ---
 

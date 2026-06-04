@@ -24,13 +24,14 @@ from bugvault.config import settings
 from bugvault.models.bug_record import BugRecord
 from bugvault.services.archive_svc import write_markdown_archive
 from bugvault.services.ingestion_svc import validate_and_prepare
-from bugvault.services.retrieval_svc import rerank
+from bugvault.services.retrieval_svc import rerank, rrf_fusion
 from bugvault.utils.logger import logger
 
 # Lazy imports (to avoid circular deps at module level):
 #   EmbeddingService  → services.embedding_svc  (conditionally imported)
 #   ReflectionService → services.reflection_svc  (conditionally imported)
-#   RAGEvaluator      → services.rag_evaluator_svc (conditionally imported)
+#   RAGEvaluator      → services.rag_evaluator_svc  (conditionally imported)
+#   format_context    → services.rag_evaluator_svc  (conditionally imported)
 
 
 # ===================================================================
@@ -45,6 +46,40 @@ _RETRIEVE_SCHEMA = {
             "description": (
                 "Error message, stack trace, or natural-language "
                 "description of the bug"
+            ),
+        },
+        "eval_depth": {
+            "type": "string",
+            "enum": ["none", "simple", "claim_level"],
+            "description": (
+                "RAG evaluation depth. "
+                "'none' = skip evaluation. "
+                "'simple' (default) = fast holistic scoring. "
+                "'claim_level' = atomic claim extraction + verification "
+                "(more tokens, richer signal, session-capped)"
+            ),
+        },
+        "target_tech_stack": {
+            "type": "string",
+            "description": (
+                "CRITICAL: When you can infer the programming language, "
+                "framework, or runtime from the error message or code "
+                "context, you MUST pass it here to filter retrieval. "
+                "Examples: 'Python', 'Java', 'Go', 'TypeScript', "
+                "'Django', 'Spring Boot', 'Kubernetes'. "
+                "Case-insensitive. This eliminates cross-language "
+                "confusion (e.g. Python ModuleNotFoundError vs Java "
+                "ClassNotFoundException)."
+            ),
+        },
+        "target_project_name": {
+            "type": "string",
+            "description": (
+                "Optional: The specific project or service name to "
+                "narrow the search to (e.g. 'bugvault-v2', "
+                "'order-svc', 'frontend-api'). "
+                "Only records whose project_name field matches will "
+                "be searched. Case-insensitive."
             ),
         },
     },
@@ -187,13 +222,9 @@ def register_tools(
 
         try:
             if name == "retrieve_bug_experience":
-                return await loop.run_in_executor(
-                    executor,
-                    _sync_retrieve,
-                    db,
-                    embedding_svc,
-                    rag_evaluator,
-                    arguments.get("query", ""),
+                return await _handle_retrieve(
+                    loop, executor, db, embedding_svc, rag_evaluator,
+                    arguments,
                 )
 
             if name == "save_bug_experience":
@@ -323,12 +354,99 @@ async def _async_embed_and_store(loop, executor, db, embedding_svc, record):
 
 
 # ===================================================================
-#  Retrieve — hybrid search + optional RAG evaluation
+#  Retrieve — hybrid search + optional async RAG evaluation
 # ===================================================================
 
 
-def _sync_retrieve(db, embedding_svc, rag_evaluator, query: str) -> list[types.TextContent]:
-    """ANN search → hybrid rerank → optional RAG eval → format text."""
+async def _handle_retrieve(
+    loop,
+    executor,
+    db,
+    embedding_svc,
+    rag_evaluator,
+    arguments: dict,
+) -> list[types.TextContent]:
+    """ANN search → hybrid rerank → optional async RAG eval → format text."""
+    query = arguments.get("query", "")
+    eval_depth = arguments.get("eval_depth", "simple")
+    target_tech_stack = arguments.get("target_tech_stack", "")
+    target_project_name = arguments.get("target_project_name", "")
+
+    # ── Sync search + format runs in executor ────────────────────
+    result = await loop.run_in_executor(
+        executor,
+        _sync_search_and_format,
+        db,
+        embedding_svc,
+        query,
+        target_tech_stack,
+        target_project_name,
+    )
+
+    # Early-exit for error / empty responses
+    if isinstance(result, list):
+        return result  # already a list[TextContent] (error or empty)
+
+    lines, results = result
+
+    # ── Async RAG evaluation (I/O-bound, outside executor) ──────
+    if (
+        rag_evaluator
+        and rag_evaluator.enabled
+        and eval_depth != "none"
+        and results
+    ):
+        try:
+            from bugvault.services.rag_evaluator_svc import format_context
+
+            context = format_context(results, rag_evaluator.top_k)
+            eval_result = await rag_evaluator.evaluate(
+                query, context, eval_depth,
+            )
+            _append_eval_to_lines(lines, eval_result)
+        except Exception:
+            logger.exception(
+                "RAG evaluation failed (results returned without scores)"
+            )
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+def _sanitise_filter_value(raw: str) -> str:
+    """Strip anything that isn't alphanumeric, space, underscore, hyphen, or dot."""
+    import re
+    return re.sub(r"[^a-zA-Z0-9_\-\s. ]", "", raw.strip())
+
+
+def _build_filter_clause(
+    target_tech_stack: str,
+    target_project_name: str,
+) -> str | None:
+    """Build a case-insensitive WHERE clause from optional filter values."""
+    clauses: list[str] = []
+    if target_tech_stack:
+        val = _sanitise_filter_value(target_tech_stack)
+        if val:
+            clauses.append(f"LOWER(tech_stack) LIKE '%{val.lower()}%'")
+    if target_project_name:
+        val = _sanitise_filter_value(target_project_name)
+        if val:
+            clauses.append(f"LOWER(project_name) LIKE '%{val.lower()}%'")
+    return " AND ".join(clauses) if clauses else None
+
+
+def _sync_search_and_format(
+    db,
+    embedding_svc,
+    query: str,
+    target_tech_stack: str = "",
+    target_project_name: str = "",
+) -> list[types.TextContent] | tuple[list[str], list[dict]]:
+    """ANN search → hybrid rerank → format results into text lines.
+
+    Returns either a ``list[TextContent]`` (early exit for errors / empty)
+    or a ``(lines, results)`` tuple for further processing.
+    """
     if not query.strip():
         return [types.TextContent(
             type="text",
@@ -346,8 +464,33 @@ def _sync_retrieve(db, embedding_svc, rag_evaluator, query: str) -> list[types.T
         from bugvault.services.embedding_svc import EmbeddingService
         embedding_svc = EmbeddingService()
 
+    rerank_limit = settings.top_k * 4  # expand candidate pool for reranker
+    filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
     query_emb = embedding_svc.generate_embedding(query)
-    results = db.search(query_emb)
+    vec_results = db.search(query_emb, filter_clause=filter_clause, limit=rerank_limit)
+
+    # ── FTS search (optional, with graceful fallback) ──────────────
+    fts_results: list[dict] = []
+    if settings.enable_fts:
+        try:
+            fts_results = db.search_fts(
+                query, filter_clause=filter_clause,
+                limit=rerank_limit,
+            )
+            # Drop BM25 zero-score results
+            fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
+        except Exception:
+            logger.warning("FTS search failed, falling back to vector-only")
+
+    # ── RRF fusion ─────────────────────────────────────────────────
+    if fts_results:
+        logger.info(
+            "Retrieve: vec=%d fts=%d — fusing via RRF(k=60)",
+            len(vec_results), len(fts_results),
+        )
+        results = rrf_fusion(vec_results, fts_results)
+    else:
+        results = vec_results
 
     if not results:
         logger.info("Retrieve: no results for query '%s'", query[:80])
@@ -356,47 +499,178 @@ def _sync_retrieve(db, embedding_svc, rag_evaluator, query: str) -> list[types.T
             text="No matching bug experiences found in the knowledge base.",
         )]
 
-    logger.info("Retrieve: %d raw ANN results for query '%s'", len(results), query[:80])
+    logger.info(
+        "Retrieve: %d raw results for query '%s'",
+        len(results), query[:80],
+    )
 
-    # ── hybrid rerank (semantic × recency) ─────────────────────────
+    # ── rerank (semantic threshold / RRF score + time decay) ───────
     pre_count = len(results)
     results = rerank(results, None)
     after_count = len(results)
     if after_count < pre_count:
-        logger.info("Retrieve: threshold filter dropped %d docs (%d → %d)",
-                     pre_count - after_count, pre_count, after_count)
+        logger.info(
+            "Retrieve: rerank dropped %d docs (%d → %d)",
+            pre_count - after_count, pre_count, after_count,
+        )
 
-    # ── format results ─────────────────────────────────────────────
+    # ── Cross-Encoder reranking (optional, lazy-loaded) ──────────
+    ce_used = False
+    if settings.enable_reranker and results:
+        try:
+            from bugvault.services.reranker_svc import get_reranker
+            reranker = get_reranker()
+            if reranker is not None:
+                results = reranker.rerank(query, results)
+                ce_used = True
+                logger.info("Cross-Encoder reranked %d candidates", len(results))
+        except Exception:
+            logger.warning("Cross-Encoder reranking failed — using RRF order")
+
+    # ── Truncate to final top_k ─────────────────────────────────
+    results = results[:settings.top_k]
+
+    # ── format results into text lines ─────────────────────────────
     lines: list[str] = []
+    lines.append("--- Retrieval Info ---")
+    if ce_used:
+        lines.append("Strategy: hybrid + Cross-Encoder reranking")
+    elif fts_results:
+        lines.append("Strategy: hybrid (vector + FTS + RRF fusion)")
+    else:
+        lines.append("Strategy: vector-only")
+    lines.append(
+        f"Sources:  {len(vec_results)} vector + {len(fts_results)} FTS"
+        if fts_results else f"Sources:  {len(vec_results)} vector results"
+    )
+    lines.append("")
     for i, row in enumerate(results, 1):
         lines.append(f"--- Result {i} ---")
         lines.append(f"Title:    {row.get('bug_title', '(untitled)')}")
         lines.append(f"Project:  {row.get('project_name', '(unknown)')}")
         lines.append(f"Time:     {row.get('create_time', '(unknown)')}")
-        lines.append(f"Error:\n{row.get('error_log_snippet', '')[:settings.max_record_chars]}")
-        lines.append(f"Tried:\n{row.get('tried_methods', '')[:settings.max_record_chars]}")
-        lines.append(f"Solution:\n{row.get('final_solution', '')[:settings.max_record_chars]}")
+        lines.append(
+            f"Error:\n{row.get('error_log_snippet', '')[:settings.max_record_chars]}"
+        )
+        lines.append(
+            f"Tried:\n{row.get('tried_methods', '')[:settings.max_record_chars]}"
+        )
+        lines.append(
+            f"Solution:\n{row.get('final_solution', '')[:settings.max_record_chars]}"
+        )
         if row.get("root_cause"):
-            lines.append(f"Root cause:\n{row['root_cause'][:settings.max_record_chars]}")
+            lines.append(
+                f"Root cause:\n{row['root_cause'][:settings.max_record_chars]}"
+            )
         lines.append("")
 
-    # ── optional RAG evaluation ────────────────────────────────────
-    if rag_evaluator and rag_evaluator.enabled:
-        try:
-            eval_result = rag_evaluator.evaluate_sync(query, results)
-            if eval_result.rag_confidence_score is not None:
-                logger.info("Retrieve RAG eval: score=%.1f/10 cr=%.1f fa=%.1f",
-                            eval_result.rag_confidence_score,
-                            eval_result.context_relevance or 0,
-                            eval_result.faithfulness or 0)
-                lines.append("--- RAG Evaluation ---")
-                lines.append(f"Confidence: {eval_result.rag_confidence_score:.1f}/10")
-                lines.append(f"Assessment: {eval_result.evaluation}")
-                lines.append("")
-        except Exception:
-            logger.exception("RAG evaluation failed (results returned without scores)")
+    return lines, results
 
-    return [types.TextContent(type="text", text="\n".join(lines))]
+
+def _compute_suggested_action(eval_result) -> str:
+    """Derive structured guidance from evaluation scores."""
+    if eval_result.rag_confidence_score is None:
+        return "UNCERTAIN"
+
+    score = eval_result.rag_confidence_score
+    faithfulness = eval_result.faithfulness
+    context_rel = eval_result.context_relevance
+
+    # Low faithfulness → potential hallucination
+    if faithfulness is not None and faithfulness < 0.5:
+        return "CAUTION"
+
+    # Low context relevance → wrong search direction
+    if context_rel is not None and context_rel < 2.0:
+        return "INSUFFICIENT"
+
+    if score >= 7.0 and (faithfulness is None or faithfulness >= 0.8):
+        return "CONFIDENT"
+
+    if score >= 5.0:
+        return "PARTIAL"
+
+    return "UNCERTAIN"
+
+
+def _append_eval_to_lines(
+    lines: list[str],
+    eval_result,
+) -> None:
+    """Append RAG evaluation block to formatted lines if applicable."""
+    if eval_result.rag_confidence_score is None:
+        return
+
+    # ── Compute suggested action and attach to result ────────────
+    eval_result.suggested_action = _compute_suggested_action(eval_result)
+
+    logger.info(
+        "Retrieve RAG eval: score=%.1f/10 strategy=%s action=%s tokens=%s/%s/%s",
+        eval_result.rag_confidence_score,
+        eval_result.strategy_used,
+        eval_result.suggested_action,
+        eval_result.prompt_tokens,
+        eval_result.completion_tokens,
+        eval_result.total_tokens,
+    )
+
+    lines.append("--- RAG Evaluation ---")
+    lines.append(
+        f"Strategy:  {eval_result.strategy_used}"
+    )
+    lines.append(
+        f"Action:    {eval_result.suggested_action}"
+    )
+    lines.append(
+        f"Confidence: {eval_result.rag_confidence_score:.1f}/10"
+    )
+
+    if eval_result.context_relevance is not None:
+        lines.append(
+            f"Context relevance: {eval_result.context_relevance:.1f}/5"
+        )
+    if eval_result.faithfulness is not None:
+        # claim_level: faithfulness is [0,1]; simple: [0,5]
+        if eval_result.strategy_used == "claim_level":
+            lines.append(
+                f"Faithfulness: {eval_result.faithfulness:.2f} "
+                f"({eval_result.faithfulness * 100:.0f}% claims supported)"
+            )
+        else:
+            lines.append(
+                f"Faithfulness: {eval_result.faithfulness:.1f}/5"
+            )
+
+    # ── Token usage ──────────────────────────────────────────────
+    if eval_result.total_tokens is not None:
+        lines.append(
+            f"Tokens: {eval_result.prompt_tokens}↑ + "
+            f"{eval_result.completion_tokens}↓ = "
+            f"{eval_result.total_tokens} total"
+        )
+
+    if eval_result.justification:
+        lines.append(f"Assessment: {eval_result.justification}")
+
+    # Append claim details for claim_level mode
+    if eval_result.claims_analysis:
+        lines.append("")
+        lines.append("--- Claim Analysis ---")
+        for i, claim in enumerate(eval_result.claims_analysis, 1):
+            status = claim.get("supported")
+            status_label = (
+                "✅" if status is True
+                else "❌" if status is False
+                else "⚠️"  # "partial"
+            )
+            lines.append(
+                f"  {i}. {status_label} {claim.get('claim', '')}"
+            )
+            reason = claim.get("reason", "")
+            if reason:
+                lines.append(f"     Reason: {reason}")
+
+    lines.append("")
 
 
 # ===================================================================

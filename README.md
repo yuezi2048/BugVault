@@ -39,18 +39,26 @@ All data stays **100% local** — no cloud, no API fees, no data leaks.
 
 Each completed cycle makes the Agent smarter — past solutions are retrievable, and prevention rules prevent the same mistake twice.
 
-### Key Features
+### What's New in v1.1
 
-- **Semantic Retrieval** — Find past bugs by natural-language query, not keyword search
+- **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md)
+- **⚡ Cross-Encoder Reranking** — Lightweight ONNX cross-encoder for 2nd-pass precision — see [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md)
+- **🧪 Claim-Level RAG Evaluation** — CoT-based claim extraction + verification with per-claim `Supported/Reason` — see [evaluation strategy](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
+- **🛡️ Double Fallback** — Quota-based + exception-based graceful degradation — never crash on LLM parse errors
+- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter design](docs/refer/设计/metadata-filtering.md) and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
+- **📊 Token Tracking** — `prompt_tokens` / `completion_tokens` / `total_tokens` returned per evaluation
+- **🧹 DB Maintenance** — `drop_table()` + concurrent batch rebuild via `scripts/rebuild_index.py`
+- **🔒 Path Safety** — Global `.expanduser().resolve()` + `mkdir(parents=True, exist_ok=True)` to prevent `~` and missing-directory crashes
+
+### v1.0 Features (retained)
+
+- **Semantic Retrieval** — Find past bugs by natural-language query
 - **Auto-persistence** — Save resolved bugs with zero manual effort (4 required fields)
-- **Dedup & Upsert** — MD5 hash primary key (`record_id`) + LanceDB `merge_insert` guarantees zero duplicate entries
+- **Dedup & Upsert** — MD5 hash primary key (`record_id`) + LanceDB `merge_insert`
 - **Concurrency Safe** — `threading.Lock` protects read/write across async threads
-- **Relevance Floor** — `MIN_SEMANTIC_SCORE=0.55` discards irrelevant documents ("宁缺毋滥")
-- **Smart Truncation** — Stack traces are intelligently cropped to preserve tokens without losing signal
-- **Time-decay Reranking** — Recent solutions rank higher; obsolete ones fade automatically
-- **Optional RAG Evaluation** — Tri-axis LLM judge scores `context_relevance` (0–5) + `faithfulness` (0–5) for quality monitoring
-- **Agent Self-Evolution** — `reflect_and_prevent_error` writes prevention rules to CLAUDE.md so the Agent never repeats the same mistake
-- **MCP-native** — Works with any MCP client: Claude Desktop, Claude Code, Cursor, Cline, Windsurf, etc.
+- **Smart Truncation** — Stack traces intelligently cropped
+- **Agent Self-Evolution** — `reflect_and_prevent_error` writes prevention rules to CLAUDE.md
+- **MCP-native** — Works with any MCP client: Claude Desktop, Claude Code, Cursor, etc.
 
 ---
 
@@ -61,15 +69,48 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/) (package manager)
 
-### Installation
+### Installation & Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/bugvault.git
 cd bugvault
 
-# Install dependencies (no GPU required)
+# Install dependencies (no GPU required, ONNX runs on CPU)
 uv sync
+
+# (Optional) Configure RAG judge LLM for quality evaluation
+cp .env.example .env
+# Edit .env — set BUGVAULT_ENABLE_RAG_EVAL=true and BUGVAULT_EVAL_LLM_API_KEY
+
+# Verify everything works (70+ tests)
+uv run pytest -v
+
+# (Optional) Seed the database with sample data
+uv run python scripts/rebuild_index.py --skip-clear
+```
+
+### Run the MCP Server
+
+Configure your MCP client (Claude Desktop, Claude Code, Cursor, etc.)
+to launch BugVault as a subprocess. The standard config entry:
+
+```json
+{
+  "mcpServers": {
+    "bugvault": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}
+```
+
+See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
 
 # Run all 43 tests to verify
 uv run pytest -v
@@ -78,14 +119,12 @@ uv run pytest -v
 ---
 
 ## Architecture: Two-Agent Collaboration
-
-```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Decision Agent (Claude)                       │
 │                                                                  │
 │  1. User reports bug                                             │
 │  2. Agent calls retrieve_bug_experience ←───────────────────┐   │
-│     → gets past solutions + RAG confidence score             │   │
+│     → past solutions + RAG score + suggested_action         │   │
 │  3. Agent diagnoses + fixes the bug                          │   │
 │  4. Agent calls save_bug_experience ─────────────────────────┘   │
 │     → MD archived immediately                                  │
@@ -97,31 +136,42 @@ uv run pytest -v
                    │ JSON-RPC via stdio (MCP)
                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   Memory Agent (BugVault)                        │
+│                   Memory Agent (BugVault v1.1)                  │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Three Single-Responsibility Tools                      │    │
+│  │  Retrieve Pipeline (funnel architecture)                │    │
 │  │                                                         │    │
-│  │  🛠️  RETRIEVE ────  🧠  SAVE ────────  📝  REFLECT   │    │
-│  │  (independent     (MD sync +       (classify root     │    │
-│  │   ANN + rerank    async vector)     cause + write      │    │
-│  │   + RAG eval)                       to CLAUDE.md)      │    │
+│  │  query                                                  │    │
+│  │    ├─→ Vector ANN (top_k×4) ───┐                        │    │
+│  │    ├─→ FTS BM25   (top_k×4) ───┤                        │    │
+│  │    │                            │                        │    │
+│  │    │ WHERE tech_stack /        │                        │    │
+│  │    │ project_name (both paths) │                        │    │
+│  │    │                            │                        │    │
+│  │    ├── RRF Fusion (k=60) ──────┤                        │    │
+│  │    ├── rerank (time decay) ─────┤                        │    │
+│  │    ├── Cross-Encoder rerank ────┤                        │    │
+│  │    └── Truncate → top_k ───────┘                        │    │
+│  │                                                         │    │
+│  │  🛠️  RETRIEVE ──  🧠  SAVE ──  📝  REFLECT            │    │
+│  │                                                         │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                                                                  │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
 │  │ LanceDB  │  │ fastembed│  │ RAG LLM │  │ Archive  │       │
-│  │ (vector) │  │ (ONNX)   │  │ (judge)  │  │ (.md)    │       │
+│  │(vec+FTS) │  │(emb+CE)  │  │(judge)   │  │ (.md)    │       │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+
 ### Key Principle: Clean Separation
 
-| Layer | Responsibility | Never Does |
-|-------|---------------|------------|
-| **Decision Agent** (Claude) | Diagnose, fix, decide what to save/reflect | ❌ Direct DB access |
-| **Memory Agent** (BugVault) | Retrieve, persist, evaluate, write rules | ❌ Fix bugs or make decisions |
-| **RAG Eval** | Returns confidence data only | ❌ Modifies Claude's response |
+| Layer                       | Responsibility                             | Never Does                   |
+| --------------------------- | ------------------------------------------ | ---------------------------- |
+| **Decision Agent** (Claude) | Diagnose, fix, decide what to save/reflect | ❌ Direct DB access           |
+| **Memory Agent** (BugVault) | Retrieve, persist, evaluate, write rules   | ❌ Fix bugs or make decisions |
+| **RAG Eval**                | Returns confidence + `suggested_action`    | ❌ Modifies Claude's response |
 
 ---
 
@@ -131,21 +181,35 @@ uv run pytest -v
 
 When the Agent encounters a bug (or the user asks about past bugs), it calls this tool **independently on the BugVault side** — not by Claude itself. BugVault handles the full pipeline:
 
-```
-1. embed query → 2. ANN search → 3. hybrid rerank + semantic threshold → 4. [optional] RAG evaluation
+1. embed query → 2. Vector ANN + FTS BM25 dual recall
+   → 3. RRF fusion (k=60) → 4. Cross-Encoder rerank
+   → 5. Truncate to top_k → 6. [optional] RAG evaluation
+
+**New in v1.1 — metadata pre-filtering:**
+
+```python
+retrieve_bug_experience(
+    query="ModuleNotFoundError",
+    target_tech_stack="Python",      # ← new: filters by tech stack (case-insensitive)
+    target_project_name="order-svc",  # ← new: filters by project name
+    eval_depth="claim_level",         # ← new: CoT-based claim verification
+)
 ```
 
-**RAG evaluation** runs as an independent hook (not blocking Claude). It returns **tri-axis confidence data** so Claude knows exactly how trustworthy each result is:
+**RAG evaluation** supports two strategies selectable via `eval_depth`:
 
-```json
-{
-  "rag_confidence_score": 8.5,       // context_relevance(3.5) + faithfulness(5.0)
-  "evaluation": "Doc1 is directly on-topic; Doc2 partially relevant...",
-  "context_relevance": 3.5,          // 0-5: how useful are the retrieved docs?
-  "faithfulness": 5.0,               // 0-5: is the info faithful to sources?
-  "justification": "Deducted points because Doc3 is off-topic..."
-}
-```
+| `eval_depth` | Strategy | Token cost | Output |
+|---|---|---|---|
+| `"none"` | Skip | 0 | No evaluation block |
+| `"simple"` | Holistic scoring | ~300 | `context_relevance`(0-5) + `faithfulness`(0-5) + `justification` |
+| `"claim_level"` | CoT extraction + verification | ~1500 | ← above + `claims_analysis[]` with per-claim `{claim, supported, reason}` |
+
+**Claim-level** forces the judge LLM to:
+1. Extract atomic factual claims from the retrieved documents
+2. Verify each claim against source context (✅ supported / ❌ unsupported / ⚠️ partial)
+3. Compute `faithfulness = supported_claims / total_claims`
+
+See [evaluation strategy](docs/refer/设计/evaluation-strategy.md) for full design details, and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for the system integration.
 
 ### 💾 `save_bug_experience` — Zero-Blocking Persistence
 
@@ -291,20 +355,95 @@ Add BugVault as an MCP server in your client's config:
 
 > **Config locations:** Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
-### Environment Variables
+---
+
+## Data Models
+
+### 🐞 `BugRecord` — Saved/Retrieved Bug Experience
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bug_title` | `str` (1-256) | ✅ | Short descriptive title |
+| `error_log_snippet` | `str` (1-32768) | ✅ | Error message or stack trace |
+| `tried_methods` | `str` (1-8192) | ✅ | Methods already attempted |
+| `final_solution` | `str` (1-16384) | ✅ | The working fix |
+| `project_name` | `str \| None` | ❌ | Affected project or service |
+| `tech_stack` | `str \| None` | ❌ | Technology tags (e.g. "Python 3.13, Django") |
+| `root_cause` | `str \| None` | ❌ | Root cause analysis (≤4096 chars) |
+| `record_id` | `str \| None` | 🛠️ auto | MD5(`bug_title` + `error_log_snippet`) — dedup key |
+| `create_time` | `str` | 🛠️ auto | ISO-8601 UTC timestamp |
+
+### 📊 `RAGEvalResult` — Evaluation Output (all fields optional)
+
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `strategy_used` | `str` | `simple` / `claim_level` / `simple (fallback_from_error)` | Which strategy produced this result |
+| `rag_confidence_score` | `float \| None` | 0-10 | Combined: `faithfulness*5 + context_relevance` |
+| `context_relevance` | `float \| None` | 0.0-5.0 | How useful are the retrieved docs for the query? |
+| `faithfulness` | `float \| None` | 0.0-5.0 (simple) / 0.0-1.0 (claim_level) | % of claims supported by source docs |
+| `evaluation` | `str \| None` | — | Alias for `justification` |
+| `justification` | `str \| None` | — | Harsh reasoning explaining point deductions |
+| `claims_analysis` | `list[dict] \| None` | — | Claim-level: `[{claim, supported, reason}]` |
+| `suggested_action` | `str \| None` | `CONFIDENT` / `PARTIAL` / `CAUTION` / `INSUFFICIENT` | Structured guidance for the Agent |
+| `prompt_tokens` | `int \| None` | — | Tokens in the prompt sent to judge LLM |
+| `completion_tokens` | `int \| None` | — | Tokens in the completion from judge LLM |
+| `total_tokens` | `int \| None` | — | Total tokens consumed by the evaluation |
+
+### 🛠️ Tool: `retrieve_bug_experience` — Request Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | `string` | ✅ | — | Error message, stack trace, or bug description |
+| `eval_depth` | `enum` | ❌ | `"simple"` | `"none"` / `"simple"` / `"claim_level"` |
+| `target_tech_stack` | `string` | ❌ | — | Tech stack filter (e.g. `"Python"`), case-insensitive |
+| `target_project_name` | `string` | ❌ | — | Project name filter (e.g. `"order-svc"`), case-insensitive |
+
+**Return value:** A formatted text block containing:
+1. `--- Retrieval Info ---` — strategy used (hybrid / vector-only) + source counts
+2. `--- Result N ---` — one section per retrieved bug record (title, project, error, tried, solution, root cause)
+3. `--- RAG Evaluation ---` — confidence scores, token usage, claim analysis (if `eval_depth != "none"`)
+
+### 💾 Tool: `save_bug_experience` — Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `bug_title` | `string` | ✅ | Short descriptive title |
+| `error_log_snippet` | `string` | ✅ | Error message or stack trace |
+| `tried_methods` | `string` | ✅ | Methods already attempted |
+| `final_solution` | `string` | ✅ | The working fix |
+| `project_name` | `string` | ❌ | Affected project (optional) |
+| `tech_stack` | `string` | ❌ | Technology tags (optional) |
+| `root_cause` | `string` | ❌ | Root cause analysis (optional) |
+
+### 📝 Tool: `reflect_and_prevent_error` — Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `reflection_text` | `string` | ✅ | Detailed analysis of what caused the bug |
+| `error_category` | `enum` | ✅ | `understanding_bias` / `code_logic_error` / `api_misuse` / `environment_issue` / `other` |
+| `preventive_rule` | `string` | ✅ | Concise actionable rule to prevent recurrence |
+
+---
+
+## Key Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BUGVAULT_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding model (bilingual) |
-| `BUGVAULT_TOP_K` | `5` | Max retrieval results |
-| `BUGVAULT_ENABLE_RAG_EVAL` | `false` | Enable LLM judge evaluation |
+| `BUGVAULT_DATA_ROOT` | `~/.bugvault` | Root directory for LanceDB + markdown archive |
+| `BUGVAULT_ENABLE_RAG_EVAL` | `false` | Enable LLM judge RAG evaluation |
 | `BUGVAULT_EVAL_LLM_API_KEY` | `""` | API key for judge LLM |
 | `BUGVAULT_EVAL_LLM_MODEL` | `gpt-4o-mini` | Judge LLM model name |
-| `BUGVAULT_EVAL_LLM_BASE_URL` | `""` | Custom API endpoint |
+| `BUGVAULT_EVAL_LLM_BASE_URL` | `https://api.openai.com/v1` | Custom API endpoint (OpenAI-compatible) |
+| `BUGVAULT_TOP_K` | `5` | Max retrieval results |
+| `BUGVAULT_ENABLE_FTS` | `true` | Enable full-text search dual recall |
+| `BUGVAULT_ENABLE_RERANKER` | `true` | Enable Cross-Encoder reranking |
+| `BUGVAULT_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-Encoder model name |
+| `BUGVAULT_ENABLE_RECENCY_DECAY` | `false` | Time-decay reranking (off = old bugs rank equally) |
+| `BUGVAULT_MAX_CLAIM_EVALS_PER_SESSION` | `10` | Claim-level eval session cap (circuit breaker) |
 | `BUGVAULT_ENABLE_REFLECTION_TOOL` | `true` | Enable preventive rules tool |
 | `BUGVAULT_THREAD_POOL_WORKERS` | `2` | I/O threads for async save/retrieve |
 
-See [.env.example](.env.example) for all options.
+See [.env.example](.env.example) for the complete list (20+ options).
 
 ---
 
@@ -349,16 +488,20 @@ write_markdown_archive(record)                 # human-readable backup
 
 ---
 
-## Design Decisions
+## Tech Stack & Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| **Why not LangChain?** | Linear CRUD + vector search. A framework adds abstraction without value. |
-| **Why `threading.Lock`?** | LanceDB's Python `_table` is not thread-safe. Without explicit locking, `search()` can read stale snapshots after `merge_insert()` on another thread. |
-| **Why `mode='overwrite'`?** | LanceDB's `drop_table + create_table(mode='create')` leaves stale version references causing "file not found" errors. |
-| **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. |
-| **Why 0.55 semantic threshold?** | Corresponds to ANN cosine distance ~0.90 — empirically the boundary below which documents are universally irrelevant. |
-| **Why tri-axis RAGAS?** | A single score conflates "bad retrieval" with "hallucination". Three axes let Claude adjust trust: ignore off-topic results but trust faithful ones. |
+| Decision | Rationale | Reference |
+|----------|-----------|-----------|
+| **Why MCP over Skill/Plugin?** | "Write once, run everywhere" — any MCP client (Claude Desktop, Cursor, Windsurf) can use BugVault without per-platform adapters. Pure local `stdio` transport, no ports, no network. | [why-not-skill.md](docs/refer/分析/02.为什么不做成skill.md) |
+| **Why LanceDB over Chroma/FAISS?** | Zero-ops embedded database (like SQLite for vectors). In-process, no Docker. MVCC for lock-free concurrent reads/writes. Native FTS + metadata filtering via columnar storage. | [why-lancedb.md](docs/refer/分析/03.为什么选择LanceDB.md) |
+| **Why not LangChain/LangGraph?** | Linear CRUD + vector search — a framework adds abstraction without value. MCP is not an Agent framework; BugVault is a tool endpoint, not a reasoning loop. Full control over prompts and error handling. | [why-sdk.md](docs/refer/分析/04.为什么选择SDK.md) |
+| **Why fastembed ONNX over OpenAI embeddings?** | Local inference, zero API cost, offline-capable. ONNX runtime is CPU-only and already loaded for reranking — no GPU needed. | — |
+| **Why Cross-Encoder over ColBERT?** | ColBERT requires a separate PyTorch index (~1.5GB) + late interaction storage. For 20-candidate reranking, Cross-Encoder ONNX (80MB) is more accurate and zero new deps. | [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
+| **Why dual fallback on claim_level?** | Small LLMs (e.g. deepseek-v4-flash) frequently produce malformed JSON on complex CoT prompts. Quota + exception double fallback ensures RAG evaluation never crashes the retrieval pipeline. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
+| **Why Metadata Pre-filtering before ANN?** | Pure semantic search mixes Python `ModuleNotFoundError` with Java `ClassNotFoundException`. LanceDB's columnar `LOWER(tech_stack) LIKE '%python%'` filter reduces the candidate pool before vector search — negligible cost, eliminates cross-language hallucination. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
+| **Why RRF (rank-based) fusion not score-based?** | Vector distance and BM25 score have incommensurable scales — adding them directly is meaningless. RRF uses rank position (k=60), which is scale-agnostic and empirically robust. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
+| **Why `ThreadPoolExecutor` for I/O?** | MCP's `asyncio` event loop must never block. LanceDB table operations and embedding inference run in a dedicated thread pool, keeping the event loop responsive for concurrent requests. | — |
+| **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. | — |
 
 ---
 

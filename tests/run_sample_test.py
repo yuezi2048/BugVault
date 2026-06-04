@@ -8,7 +8,8 @@ import tempfile
 from pathlib import Path
 
 # ── Point to the project root ──────────────────────────────────────
-PROJECT_ROOT = Path("/home/ljy/Documents/myprogram/my-demo/BugVault")
+# This script is designed to run via ``uv run python tests/run_sample_test.py``.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── Must import stdout_guard BEFORE anything else ─────────────────
@@ -663,7 +664,9 @@ async def main():
         # RAG evaluation
         if rag_eval.enabled:
             try:
-                eval_result = rag_eval.evaluate_sync(q, results)
+                from bugvault.services.rag_evaluator_svc import format_context
+                context = format_context(results, rag_eval.top_k)
+                eval_result = await rag_eval.evaluate(q, context, "simple")
                 if eval_result.rag_confidence_score is not None:
                     print(f"\n  📊 RAG Evaluation:")
                     print(f"     Confidence: {eval_result.rag_confidence_score:.1f}/10")

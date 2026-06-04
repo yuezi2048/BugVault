@@ -34,6 +34,7 @@ class LanceDBClient:
 
     def __init__(self) -> None:
         self._table = None
+        self._db = None
         self._lock = threading.Lock()
 
     # ── Lifecycle ───────────────────────────────────────────────────
@@ -46,21 +47,91 @@ class LanceDBClient:
         """
         self._init_table()
 
+    def drop_table(self) -> None:
+        """Drop the entire table and re-create an empty one.
+
+        This is the most thorough way to clear all data — no stale
+        records survive. Safe to call when the table doesn't exist.
+        """
+        if self._db is not None:
+            try:
+                if self.TABLE_NAME in self._db.list_tables().tables:
+                    self._db.drop_table(self.TABLE_NAME)
+                    logger.info("Dropped table: %s", self.TABLE_NAME)
+            except Exception:
+                logger.exception("Failed to drop table (non-fatal, will recreate)")
+        self._table = None
+        self._init_table()
+
     @property
     def is_ready(self) -> bool:
         return self._table is not None
 
+    # ── FTS (Full-Text Search) ─────────────────────────────────────
+
+    def create_fts_index(self, replace: bool = True) -> None:
+        """Create (or replace) the Tantivy FTS index on the ``search_text`` column.
+
+        Must be called after records are inserted so the index is
+        populated.  Called automatically from ``initialize()`` and
+        after ``import_from_archive()`` bulk loads.
+        """
+        if not self.is_ready:
+            logger.warning("Table not ready — skipping FTS index creation")
+            return
+        try:
+            self._table.create_fts_index("search_text", replace=replace)  # type: ignore[union-attr]
+            logger.info("FTS index created/replaced on search_text")
+        except Exception:
+            logger.exception("FTS index creation failed (non-fatal, vector search still works)")
+
+    def search_fts(
+        self,
+        query_text: str,
+        filter_clause: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Full-text search via Tantivy BM25.
+
+        Each result row includes a ``_score`` field (BM25 relevance).
+        Returns empty list on failure (FTS index missing, engine error).
+        """
+        if not self.is_ready:
+            raise RuntimeError("BugVault is still initialising")
+        try:
+            with self._lock:
+                query = self._table.search(query_text)  # type: ignore[union-attr]
+                if filter_clause:
+                    query = query.where(filter_clause)
+                return query.limit(limit or settings.top_k * 4).to_list()
+        except Exception:
+            logger.exception("FTS search failed (fallback to vector-only)")
+            return []
+
     # ── Public API ──────────────────────────────────────────────────
 
-    def search(self, embedding: list[float]) -> list[dict]:
+    def search(
+        self,
+        embedding: list[float],
+        filter_clause: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
         """Perform ANN search with a pre-computed *embedding*.
+
+        Args:
+            embedding: The query vector.
+            filter_clause: Optional SQL filter applied *before* ANN search.
+            limit: Max results (default ``settings.top_k``).
 
         Returns raw rows from LanceDB (list of dicts).
         """
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
         with self._lock:
-            return self._table.search(embedding).limit(settings.top_k).to_list()  # type: ignore[union-attr]
+            query = self._table.search(embedding)
+            if filter_clause:
+                query = query.where(filter_clause)
+            return query.limit(limit or settings.top_k).to_list()  # type: ignore[union-attr]
 
     def upsert_record(
         self,
@@ -105,13 +176,13 @@ class LanceDBClient:
     # ── Internal helpers ────────────────────────────────────────────
 
     def _init_table(self) -> None:
-        db = lancedb.connect(settings.db_uri)
+        self._db = lancedb.connect(settings.db_uri)
         logger.info("LanceDB connected at: %s", settings.db_uri)
 
-        existing = db.list_tables()
+        existing = self._db.list_tables()
         existing_names: list[str] = existing.tables
         if self.TABLE_NAME in existing_names:
-            self._table = db.open_table(self.TABLE_NAME)
+            self._table = self._db.open_table(self.TABLE_NAME)
             logger.info("Opened existing table: %s", self.TABLE_NAME)
         else:
             schema = pa.schema([
@@ -127,5 +198,9 @@ class LanceDBClient:
                 pa.field("create_time", pa.utf8()),
                 pa.field("search_text", pa.utf8()),
             ])
-            self._table = db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
+            self._table = self._db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
             logger.info("Created new table: %s", self.TABLE_NAME)
+
+        # Always attempt FTS index creation — lightweight if already exists
+        if settings.enable_fts:
+            self.create_fts_index(replace=True)

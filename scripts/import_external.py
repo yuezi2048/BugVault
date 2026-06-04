@@ -69,6 +69,22 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0,
                         help="Max records to import (0 = all)")
 
+    # Self-join mode (for Stack Overflow posts table where answers are same table)
+    parser.add_argument("--join-solution", action="store_true",
+                        help="Enable self-join mode: questions.AcceptedAnswerId → answers.Id")
+    parser.add_argument("--col-id", default="Id",
+                        help="Column name for the record ID (default: Id)")
+    parser.add_argument("--col-parent", default="ParentId",
+                        help="Column name for the answer's parent question ID")
+    parser.add_argument("--col-post-type", default="PostTypeId",
+                        help="Column name for post type discriminator")
+    parser.add_argument("--post-type-question", type=int, default=1,
+                        help="Value identifying a question post (default: 1)")
+    parser.add_argument("--post-type-answer", type=int, default=2,
+                        help="Value identifying an answer post (default: 2)")
+    parser.add_argument("--col-accepted-answer", default="AcceptedAnswerId",
+                        help="Column name for accepted answer reference")
+
     # Column mapping
     parser.add_argument("--map-title", required=True,
                         help="Column/field name for bug_title")
@@ -117,6 +133,26 @@ def main() -> None:
     print(f"  📖 Reading {args.format} file …")
     rows = _read_file(args.format, args.input, args.limit)
     print(f"     Found {len(rows)} records")
+
+    # ── Self-join mode (Stack Overflow: questions ↔ answers) ────
+    if args.join_solution:
+        print(f"  🔗 Self-join mode: matching answers to questions …")
+        joined = _self_join_solutions(
+            rows,
+            id_col=args.col_id,
+            accepted_col=args.col_accepted_answer,
+            post_type_col=args.col_post_type,
+            question_type=args.post_type_question,
+            answer_type=args.post_type_answer,
+            solution_col=args.map_solution,
+        )
+        print(f"     Joined {len(joined)} questions with accepted answers")
+        # Replace solution field in each row
+        for idx_from, solution_text in joined:
+            rows[idx_from][args.map_solution] = solution_text
+        # Remove rows that still have no solution
+        rows = [r for r in rows if r.get(args.map_solution)]
+        print(f"     After removing unanswered: {len(rows)} records")
 
     # ── Apply filters ─────────────────────────────────────────────
     if args.tech_stack_prefix:
@@ -244,6 +280,61 @@ def _read_csv(path: Path, limit: int) -> list[dict]:
                 break
             rows.append(row)
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Self-join (Stack Overflow: questions ← answers)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _self_join_solutions(
+    rows: list[dict],
+    id_col: str,
+    accepted_col: str,
+    post_type_col: str,
+    question_type: int,
+    answer_type: int,
+    solution_col: str,
+) -> list[tuple[int, str]]:
+    """Build accepted_answer_id → Body lookup, then join to questions.
+
+    Returns list of (row_index, answer_body) for questions that have
+    an accepted answer present in the dataset.
+    """
+    # Build answer lookup: Id → Body
+    answer_body: dict[str | int, str] = {}
+    for row in rows:
+        pt = row.get(post_type_col)
+        if isinstance(pt, str):
+            try:
+                pt = int(pt)
+            except (ValueError, TypeError):
+                continue
+        if pt == answer_type:
+            aid = row.get(id_col)
+            body = row.get(solution_col, "") or ""
+            if aid is not None:
+                answer_body[aid] = body
+
+    # Match questions to their accepted answer
+    result: list[tuple[int, str]] = []
+    for idx, row in enumerate(rows):
+        pt = row.get(post_type_col)
+        if isinstance(pt, str):
+            try:
+                pt = int(pt)
+            except (ValueError, TypeError):
+                continue
+        if pt != question_type:
+            continue
+        accepted_id = row.get(accepted_col)
+        if accepted_id is None:
+            continue
+        body = answer_body.get(accepted_id)
+        if body:
+            result.append((idx, body))
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════

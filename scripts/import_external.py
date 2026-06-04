@@ -294,7 +294,7 @@ def main() -> None:
             for idx, emb_vec in enumerate(chunk_embs):
                 chunk_rows[idx]["vector"] = emb_vec
 
-            client.ensure_chunks_table()
+            # Client.initialize() already creates the chunks table
             client.upsert_chunks(chunk_rows)
             client.create_chunks_fts_index()
             print(f"  🧩 Wrote {len(chunk_rows)} chunks to bugvault_chunks")

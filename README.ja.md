@@ -55,7 +55,7 @@ BugVault はバグ修正ライフサイクル全体をカバーする 3 つの M
 
 - **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) 参照
 - **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](docs/refer/设计/adr-cross-encoder-vs-colbert.md) 参照
-- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](docs/refer/设计/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
+- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](docs/refer/设计/evaluation-strategy.md) および [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
 - **🛡️ 二重フォールバック** — クォータ制限 + 例外捕捉、LLM 解析失敗時もメインスレッドをブロックしない
 - **🔍 メタデータ事前フィルター** — `target_tech_stack` + `target_project_name`、大文字小文字を区別せず SQL インジェクション対策済み
 - **📊 Token 統計** — 評価ごとに `prompt_tokens` / `completion_tokens` / `total_tokens` を返却
@@ -199,61 +199,6 @@ Agent がバグを修正した後、**試行パス** と **最終結果** を保
 | `environment_issue` | 環境/設定の問題 | 「システム依存関係が不足している」 |
 
 予防ルールは `CLAUDE.md` の `## Bug Prevention Rules` セクションに書き込まれます。次回セッションでは CLAUDE.md が system prompt として自動ロードされ、Agent は **同じミスを二度と繰り返しません**。
-
----
-
-## データモデル
-
-```python
-class BugRecord(BaseModel):
-    # ── 必須フィールド ──
-    bug_title: str              # 短い説明
-    error_log_snippet: str      # エラーメッセージ / スタックトレース
-    tried_methods: str          # 試行した方法（失敗も含む）
-    final_solution: str         # 最終的な修正方法
-
-    # ── オプションフィールド ──
-    project_name: str | None
-    tech_stack: str | None
-    root_cause: str | None
-
-    # ── システム管理 ──
-    record_id: str | None       # MD5(bug_title + error_log_snippet) — 自動計算
-    create_time: str            # ISO-8601 UTC タイムスタンプ（自動生成）
-```
-
-**record_id の自動計算**：
-```python
-@model_validator(mode="after")
-def _compute_record_id(self) -> "BugRecord":
-    import hashlib
-    raw = (self.bug_title + self.error_log_snippet).encode("utf-8")
-    self.record_id = hashlib.md5(raw).hexdigest()
-    return self
-```
-
----
-
-## デプロイ
-
-### MCP 設定
-
-```json
-{
-  "mcpServers": {
-    "bugvault": {
-      "command": "/path/to/uv",
-      "args": [
-        "run",
-        "--directory", "/絶対パス/bugvault",
-        "python", "-m", "bugvault.main"
-      ]
-    }
-  }
-}
-```
-
-> **設定場所：** Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ---
 

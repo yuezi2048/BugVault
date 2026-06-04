@@ -36,6 +36,27 @@ Usage
         --map-methods tried \
         --limit 10000
 
+    # HuggingFace streaming dataset (recommended for large-scale)
+    uv run python scripts/import_external.py \
+        --format hf \
+        --hf-dataset juancopi81/stack_overflow_python_data \
+        --hf-split train \
+        --hf-filter python \
+        --map-title title \
+        --map-error body \
+        --map-solution answer_body \
+        --map-tags tags \
+        --map-time creation_date \
+        --limit 100000
+
+    # HF mode + extract_so_fields: auto-extract code blocks + answer body
+    uv run python scripts/import_external.py \
+        --format hf \
+        --hf-dataset ncoop57/stackoverflow \
+        --hf-split train \
+        --extract-so-fields \
+        --limit 50000
+
 Environment
 -----------
 All ``BUGVAULT_*`` env vars are honoured (data_root, embedding model, etc.).
@@ -62,10 +83,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Bulk import bug records from external datasets into BugVault",
     )
-    parser.add_argument("--format", required=True, choices=["parquet", "json", "csv"],
-                        help="Input file format")
-    parser.add_argument("--input", required=True,
-                        help="Path to input file")
+    parser.add_argument("--format", required=True, choices=["parquet", "json", "csv", "hf"],
+                        help="Input file format (hf = HuggingFace streaming dataset)")
+    parser.add_argument("--input", default="",
+                        help="Path to input file (not used for --format hf)")
+
+    # HuggingFace dataset options
+    parser.add_argument("--hf-dataset", default="juancopi81/stack_overflow_python_data",
+                        help="HuggingFace dataset name (default: juancopi81/stack_overflow_python_data)")
+    parser.add_argument("--hf-split", default="train",
+                        help="Dataset split (default: train)")
+    parser.add_argument("--hf-filter", default="",
+                        help="Optional: only import rows where tags contain this string (case-insensitive)")
     parser.add_argument("--limit", type=int, default=0,
                         help="Max records to import (0 = all)")
 
@@ -84,6 +113,10 @@ def main() -> None:
                         help="Value identifying an answer post (default: 2)")
     parser.add_argument("--col-accepted-answer", default="AcceptedAnswerId",
                         help="Column name for accepted answer reference")
+
+    # Auto-extract Stack Overflow fields (HF mode only)
+    parser.add_argument("--extract-so-fields", action="store_true",
+                        help="Auto-extract code_block→error, text→tried_methods from SO HTML")
 
     # Column mapping
     parser.add_argument("--map-title", required=True,
@@ -130,8 +163,12 @@ def main() -> None:
     embedding_svc = EmbeddingService()
 
     # ── Read data ─────────────────────────────────────────────────
-    print(f"  📖 Reading {args.format} file …")
-    rows = _read_file(args.format, args.input, args.limit)
+    if args.format == "hf":
+        print(f"  📖 Streaming from HuggingFace dataset '{args.hf_dataset}' …")
+        rows = _read_hf_stream(args.hf_dataset, args.hf_split, args.hf_filter, args.limit)
+    else:
+        print(f"  📖 Reading {args.format} file …")
+        rows = _read_file(args.format, args.input, args.limit)
     print(f"     Found {len(rows)} records")
 
     # ── Self-join mode (Stack Overflow: questions ↔ answers) ────
@@ -166,7 +203,18 @@ def main() -> None:
     batch_data: list[dict] = []
     failed = 0
     for i, row in enumerate(rows):
-        record = _row_to_record(row, args)
+        if args.extract_so_fields and args.format == "hf":
+            so_fields = extract_so_fields(row)
+            record = BugRecord(
+                bug_title=so_fields["bug_title"] or "(untitled)",
+                error_log_snippet=so_fields["error_log_snippet"] or "(no error log)",
+                tried_methods=so_fields["tried_methods"],
+                final_solution=so_fields["final_solution"],
+                tech_stack=so_fields["tech_stack"] or None,
+                create_time=so_fields["create_time"],
+            )
+        else:
+            record = _row_to_record(row, args)
         if record is None:
             failed += 1
             continue
@@ -280,6 +328,132 @@ def _read_csv(path: Path, limit: int) -> list[dict]:
                 break
             rows.append(row)
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  HuggingFace streaming reader
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _read_hf_stream(
+    dataset_name: str,
+    split: str,
+    tag_filter: str,
+    limit: int,
+) -> list[dict]:
+    """Stream dataset from HuggingFace with ``streaming=True``.
+
+    Each row is converted to a flat dict with keys expected by
+    downstream field mapping and HTML extraction:
+      ``title``, ``body``, ``answer_body``, ``tags``, ``creation_date``
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "datasets library required for HF streaming: "
+            "pip install datasets"
+        )
+
+    dataset = load_dataset(dataset_name, split=split, streaming=True)
+    rows: list[dict] = []
+    tag_filter_lower = tag_filter.lower() if tag_filter else ""
+
+    for item in dataset:
+        # ── Tag filter ────────────────────────────────────────────
+        raw_tags = item.get("tags", "") or item.get("Tags", "") or ""
+        if isinstance(raw_tags, list):
+            tag_str = " ".join(str(t) for t in raw_tags).lower()
+        else:
+            tag_str = str(raw_tags).lower()
+        if tag_filter_lower and tag_filter_lower not in tag_str:
+            continue
+
+        # ── Flatten to canonical field names ─────────────────────
+        body = item.get("body", "") or item.get("Body", "") or ""
+        answers = item.get("answers", None) or item.get("Answers", None)
+
+        row = {
+            "title": item.get("title", "") or item.get("Title", "") or "",
+            "body": body,
+            "answer_body": _pick_answer_body(answers),
+            "tags": raw_tags,
+            "creation_date": str(item.get("creation_date", "") or item.get("CreationDate", "") or ""),
+        }
+
+        # Skip rows without a valid code block in body
+        if "<pre><code>" not in body and "```" not in body:
+            continue
+
+        rows.append(row)
+        if len(rows) % 1000 == 0:
+            print(f"     Streamed {len(rows)} rows …")
+
+        if limit > 0 and len(rows) >= limit:
+            break
+
+    return rows
+
+
+def _pick_answer_body(answers) -> str:
+    """Extract the best answer body from various answer formats."""
+    if not answers:
+        return ""
+    if isinstance(answers, list):
+        # Pick first answer with a body
+        for ans in answers:
+            if isinstance(ans, dict):
+                body = ans.get("body", "") or ans.get("Body", "") or ""
+                if body:
+                    # Some datasets store accepted answer as first element
+                    return body
+            elif isinstance(ans, str):
+                return ans
+        # Fallback to first element
+        if isinstance(answers[0], dict):
+            return str(answers[0].get("body", answers[0].get("Body", "")))
+        return str(answers[0])
+    if isinstance(answers, str):
+        return answers
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  HTML → BugRecord field extraction (for HF streaming mode)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def extract_so_fields(item: dict) -> dict:
+    """Extract BugRecord-mapped fields from a Stack Overflow question dict.
+
+    Returns keys: ``bug_title``, ``error_log_snippet``, ``tried_methods``,
+    ``final_solution``, ``tech_stack``, ``create_time``.
+    """
+    import re
+
+    body = item.get("body", "")
+    answer_body = item.get("answer_body", "")
+
+    # ── error_log_snippet: first <pre><code> block ──────────────
+    code_match = re.search(r"<pre><code>(.*?)</code></pre>", body, re.DOTALL)
+    error_snippet = code_match.group(1).strip()[:800] if code_match else "(no code block found)"
+
+    # ── tried_methods: body text after stripping code blocks ─────
+    text_only = re.sub(r"<pre><code>.*?</code></pre>", "", body, flags=re.DOTALL)
+    text_only = re.sub(r"<.*?>", "", text_only).strip()
+    tried_methods = text_only[:2000] if len(text_only) > 50 else "(not recorded in question)"
+
+    # ── final_solution: accepted answer body (cleaned) ──────────
+    solution = re.sub(r"<.*?>", "", answer_body).strip()[:2000] if answer_body else "(no answer body)"
+
+    return {
+        "bug_title": item.get("title", "")[:256],
+        "error_log_snippet": error_snippet,
+        "tried_methods": tried_methods,
+        "final_solution": solution or "(no answer)",
+        "tech_stack": str(item.get("tags", ""))[:256],
+        "create_time": item.get("creation_date", ""),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -36,25 +36,33 @@ Usage
         --map-methods tried \
         --limit 10000
 
-    # HuggingFace streaming dataset (recommended for large-scale)
+    # Stack Overflow posts Parquet + self-join (recommended, tested with mikex86/stackoverflow-posts)
     uv run python scripts/import_external.py \
-        --format hf \
-        --hf-dataset juancopi81/stack_overflow_python_data \
-        --hf-split train \
-        --hf-filter python \
-        --map-title title \
-        --map-error body \
-        --map-solution answer_body \
-        --map-tags tags \
-        --map-time creation_date \
+        --format parquet \
+        --input stackoverflow_posts.parquet \
+        --join-solution \
+        --col-id Id \
+        --col-accepted-answer AcceptedAnswerId \
+        --col-post-type PostTypeId \
+        --post-type-question 1 \
+        --post-type-answer 2 \
+        --map-title Title \
+        --map-error Body \
+        --map-solution Body \
+        --map-tags Tags \
+        --map-time CreationDate \
+        --tech-stack-prefix python \
         --limit 100000
 
-    # HF mode + extract_so_fields: auto-extract code blocks + answer body
+    # HuggingFace streaming dataset (for pre-joined QA datasets like mteb/StackOverflowQA)
     uv run python scripts/import_external.py \
         --format hf \
-        --hf-dataset ncoop57/stackoverflow \
+        --hf-dataset mteb/StackOverflowQA \
         --hf-split train \
-        --extract-so-fields \
+        --map-title title \
+        --map-error text \
+        --map-solution answer \
+        --map-tags tags \
         --limit 50000
 
 Environment
@@ -196,12 +204,13 @@ def main() -> None:
         _filter_by_tech_stack(rows, args.tech_stack_prefix, args.map_tags)
         print(f"     After tech_stack filter: {len(rows)} records")
 
-    # ── Parse & embed ─────────────────────────────────────────────
-    print("  🧠 Generating embeddings …")
+    # ── Parse & batch embed ──────────────────────────────────────
+    print("  🧠 Generating embeddings (batch inference) …")
     t_embed = time.perf_counter()
+    BATCH_SIZE = 64  # fastembed optimal batch size for CPU
 
-    batch_data: list[dict] = []
-    failed = 0
+    # First pass: parse all records and collect search texts
+    records: list[tuple[BugRecord, str] | None] = []
     for i, row in enumerate(rows):
         if args.extract_so_fields and args.format == "hf":
             so_fields = extract_so_fields(row)
@@ -215,15 +224,35 @@ def main() -> None:
             )
         else:
             record = _row_to_record(row, args)
+
         if record is None:
+            records.append(None)
+            continue
+        records.append((record, record.to_search_text()))
+
+    # Second pass: batch inference via fastembed native batch
+    texts = [r[1] for r in records if r is not None]
+    if texts:
+        embeddings_iter = embedding_svc._model.embed(texts, batch_size=BATCH_SIZE)
+        embeddings = list(embeddings_iter)  # type: ignore[arg-type]
+    else:
+        embeddings = []
+
+    # Third pass: assemble batch_data from parsed records + embeddings
+    batch_data: list[dict] = []
+    failed = 0
+    emb_idx = 0
+    for i, record_tuple in enumerate(records):
+        if record_tuple is None:
             failed += 1
             continue
 
-        search_text = record.to_search_text()
+        record, search_text = record_tuple
         try:
-            embedding = embedding_svc.generate_embedding(search_text)
-        except Exception:
-            logger.exception("Embedding failed for record %d", i)
+            embedding = embeddings[emb_idx]  # type: ignore[index]
+            emb_idx += 1
+        except (IndexError, Exception):
+            logger.exception("Embedding missing for record %d", i)
             failed += 1
             continue
 
@@ -242,7 +271,7 @@ def main() -> None:
         })
 
         if (i + 1) % 1000 == 0:
-            print(f"     Progress: {i + 1}/{len(rows)} ({batch_data[-1]['bug_title'][:40]})")
+            print(f"     Progress: {i + 1}/{len(records)} ({record.bug_title[:40]})")
 
     print(f"     Embedded {len(batch_data)} records ({time.perf_counter() - t_embed:.1f}s)")
 

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # ── MCP ─────────────────────────────────────────────────────────
     server_name: str = "bugvault"
-    server_version: str = "0.1.0"
+    server_version: str = "1.0.0"
 
     # ── Async persistence ───────────────────────────────────────────
     enable_async_embedding: bool = True  # background embedding + LanceDB

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bugvault"
-version = "0.1.0"
+version = "1.0.0"
 description = "Bug Experience Vault & Intelligent Retrieval System - MCP Server for persistent bug troubleshooting memory"
 readme = "README.md"
 requires-python = ">=3.13"

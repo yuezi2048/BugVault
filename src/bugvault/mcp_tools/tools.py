@@ -138,19 +138,24 @@ def register_tools(
             types.Tool(
                 name="retrieve_bug_experience",
                 description=(
-                    "Search the bug knowledge base for past experiences "
-                    "matching the given error. Returns semantically similar "
-                    "records with their tried_methods and final_solution."
+                    "CRITICAL: You MUST ALWAYS call this tool FIRST before providing any fix, suggestion, or analysis for a bug, error log, stack trace, or exception. "
+                    "NEVER rely on your general knowledge or training data until you have queried this local BugVault database for historical context. "
+                    "MANDATORY WORKFLOW: When user presents ANY error message, crash report, debugging issue, or code problem → IMMEDIATELY invoke this tool with the error details. "
+                    "ONLY after retrieving past experiences from the knowledge base should you proceed to analyze and propose solutions. "
+                    "This ensures you leverage accumulated project-specific insights instead of repeating past mistakes. "
+                    "FAILURE TO CALL THIS TOOL FIRST will result in suboptimal debugging and ignored organizational knowledge."
                 ),
                 inputSchema=_RETRIEVE_SCHEMA,
             ),
             types.Tool(
                 name="save_bug_experience",
                 description=(
-                    "Persist a resolved bug experience into the knowledge "
-                    "base. Only the 4 core fields (bug_title, "
-                    "error_log_snippet, tried_methods, final_solution) are "
-                    "required. Optional fields can be enriched later."
+                    "CRITICAL: You MUST call this tool IMMEDIATELY after successfully resolving ANY bug, error, or unexpected behavior — without exception. "
+                    "MANDATORY TRIGGER: Every time a debugging session concludes with a working solution, you are REQUIRED to persist this experience using save_bug_experience. "
+                    "REQUIRED FIELDS: bug_title (concise descriptive title), error_log_snippet (exact error message or stack trace), tried_methods (what you attempted that failed), final_solution (the working fix). "
+                    "OPTIONAL ENRICHMENT: project_name, tech_stack, root_cause can be added later but core fields are mandatory NOW. "
+                    "WARNING: Skipping this step means losing valuable institutional knowledge and forcing future developers to re-solve the same problem. "
+                    "ALWAYS capture the lesson while it's fresh — do NOT delay or skip this critical knowledge preservation step."
                 ),
                 inputSchema=_SAVE_SCHEMA,
             ),
@@ -161,10 +166,12 @@ def register_tools(
                 types.Tool(
                     name="reflect_and_prevent_error",
                     description=(
-                        "After fixing a bug, analyse the root cause and "
-                        "persist a preventive rule so the same mistake is "
-                        "never made again. The rule is written to the "
-                        "project's CLAUDE.md under ## Bug Prevention Rules."
+                        "CRITICAL: After fixing a significant or recurring bug, you MUST call this tool to perform root cause analysis and generate preventive rules. "
+                        "MANDATORY FOR: Architecture-level mistakes, repeated errors, design pattern violations, or bugs revealing systemic issues. "
+                        "WORKFLOW: Analyze WHY the bug occurred → Identify the fundamental misunderstanding or flawed assumption → Formulate an actionable rule → Persist to CLAUDE.md. "
+                        "REQUIRED FIELDS: reflection_text (detailed analysis of what caused the bug and why), error_category (classification from predefined enum), preventive_rule (concise, actionable guideline to prevent recurrence). "
+                        "IMPACT: This transforms individual debugging sessions into organizational learning — the generated rules become permanent guardrails in CLAUDE.md. "
+                        "DO NOT SKIP: Failing to reflect means the same mistake will likely recur. Capture the lesson permanently."
                     ),
                     inputSchema=_REFLECT_SCHEMA,
                 ),

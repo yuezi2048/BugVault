@@ -51,14 +51,25 @@ BugVault はバグ修正ライフサイクル全体をカバーする 3 つの M
 
 ### 主な機能
 
-- **意味検索** — キーワードではなく自然言語で過去のバグを検索
-- **重複排除 & Upsert** — MD5 ハッシュ主キー (`record_id`) + `merge_insert`、重複ゼロ
-- **並行処理安全性** — `threading.Lock` で非同期スレッド間の競合から保護
-- **関連性フロア** — `MIN_SEMANTIC_SCORE=0.55` で無関係な文書を破棄
-- **オプション RAG 評価** — 3 軸 LLM 判定：`context_relevance`(0–5) + `faithfulness`(0–5) + 厳しい減点理由
-- **Agent 自己進化** — 振り返りツールが CLAUDE.md に予防ルールを書き込み、次回セッションで自動ロード
+### v1.1 新機能
+
+- **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](doc/02設計/04.v1.1-architecture.md) 参照
+- **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](doc/02設計/adr-cross-encoder-vs-colbert.md) 参照
+- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](doc/02設計/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
+- **🛡️ 二重フォールバック** — クォータ制限 + 例外捕捉、LLM 解析失敗時もメインスレッドをブロックしない
+- **🔍 メタデータ事前フィルター** — `target_tech_stack` + `target_project_name`、大文字小文字を区別せず SQL インジェクション対策済み
+- **📊 Token 統計** — 評価ごとに `prompt_tokens` / `completion_tokens` / `total_tokens` を返却
+- **🧹 DB メンテナンス** — `drop_table()` + 並行バッチリビルド、65 件 0.6 秒
+- **🔒 パス安全性** — 全局 `.expanduser().resolve()` + `mkdir()` 事前作成
+
+### v1.0 継続機能
+
+- **意味検索** — 自然言語で過去のバグを検索
+- **重複排除 & Upsert** — MD5 主キー + `merge_insert`、重複ゼロ
+- **並行処理安全性** — `threading.Lock` 保護
+- **Agent 自己進化** — CLAUDE.md に予防ルール書き込み
 - **純粋ローカル** — `~/.bugvault/`、ネットワーク不要
-- **MCP ネイティブ** — Claude Desktop、Claude Code、Cursor など対応
+- **MCP ネイティブ** — Claude Desktop、Claude Code など対応
 
 ---
 

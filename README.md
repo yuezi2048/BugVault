@@ -39,18 +39,26 @@ All data stays **100% local** — no cloud, no API fees, no data leaks.
 
 Each completed cycle makes the Agent smarter — past solutions are retrievable, and prevention rules prevent the same mistake twice.
 
-### Key Features
+### What's New in v1.1
 
-- **Semantic Retrieval** — Find past bugs by natural-language query, not keyword search
+- **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](doc/02设计/04.v1.1-architecture.md)
+- **⚡ Cross-Encoder Reranking** — Lightweight ONNX cross-encoder for 2nd-pass precision — see [ADR](doc/02设计/adr-cross-encoder-vs-colbert.md)
+- **🧪 Claim-Level RAG Evaluation** — CoT-based claim extraction + verification with per-claim `Supported/Reason` — see [evaluation strategy](doc/02设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
+- **🛡️ Double Fallback** — Quota-based + exception-based graceful degradation — never crash on LLM parse errors
+- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter](doc/02设计/04.v1.1-architecture.md#三元数据预过滤)
+- **📊 Token Tracking** — `prompt_tokens` / `completion_tokens` / `total_tokens` returned per evaluation
+- **🧹 DB Maintenance** — `drop_table()` + concurrent batch rebuild via `scripts/rebuild_index.py`
+- **🔒 Path Safety** — Global `.expanduser().resolve()` + `mkdir(parents=True, exist_ok=True)` to prevent `~` and missing-directory crashes
+
+### v1.0 Features (retained)
+
+- **Semantic Retrieval** — Find past bugs by natural-language query
 - **Auto-persistence** — Save resolved bugs with zero manual effort (4 required fields)
-- **Dedup & Upsert** — MD5 hash primary key (`record_id`) + LanceDB `merge_insert` guarantees zero duplicate entries
+- **Dedup & Upsert** — MD5 hash primary key (`record_id`) + LanceDB `merge_insert`
 - **Concurrency Safe** — `threading.Lock` protects read/write across async threads
-- **Relevance Floor** — `MIN_SEMANTIC_SCORE=0.55` discards irrelevant documents ("宁缺毋滥")
-- **Smart Truncation** — Stack traces are intelligently cropped to preserve tokens without losing signal
-- **Time-decay Reranking** — Recent solutions rank higher; obsolete ones fade automatically
-- **Optional RAG Evaluation** — Tri-axis LLM judge scores `context_relevance` (0–5) + `faithfulness` (0–5) for quality monitoring
-- **Agent Self-Evolution** — `reflect_and_prevent_error` writes prevention rules to CLAUDE.md so the Agent never repeats the same mistake
-- **MCP-native** — Works with any MCP client: Claude Desktop, Claude Code, Cursor, Cline, Windsurf, etc.
+- **Smart Truncation** — Stack traces intelligently cropped
+- **Agent Self-Evolution** — `reflect_and_prevent_error` writes prevention rules to CLAUDE.md
+- **MCP-native** — Works with any MCP client: Claude Desktop, Claude Code, Cursor, etc.
 
 ---
 
@@ -85,7 +93,7 @@ uv run pytest -v
 │                                                                  │
 │  1. User reports bug                                             │
 │  2. Agent calls retrieve_bug_experience ←───────────────────┐   │
-│     → gets past solutions + RAG confidence score             │   │
+│     → past solutions + RAG score + suggested_action         │   │
 │  3. Agent diagnoses + fixes the bug                          │   │
 │  4. Agent calls save_bug_experience ─────────────────────────┘   │
 │     → MD archived immediately                                  │
@@ -97,20 +105,30 @@ uv run pytest -v
                    │ JSON-RPC via stdio (MCP)
                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   Memory Agent (BugVault)                        │
+│                   Memory Agent (BugVault v1.1)                  │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Three Single-Responsibility Tools                      │    │
+│  │  Retrieve Pipeline (funnel architecture)                │    │
 │  │                                                         │    │
-│  │  🛠️  RETRIEVE ────  🧠  SAVE ────────  📝  REFLECT   │    │
-│  │  (independent     (MD sync +       (classify root     │    │
-│  │   ANN + rerank    async vector)     cause + write      │    │
-│  │   + RAG eval)                       to CLAUDE.md)      │    │
+│  │  query                                                  │    │
+│  │    ├─→ Vector ANN (top_k×4) ───┐                        │    │
+│  │    ├─→ FTS BM25   (top_k×4) ───┤                        │    │
+│  │    │                            │                        │    │
+│  │    │ WHERE tech_stack /        │                        │    │
+│  │    │ project_name (both paths) │                        │    │
+│  │    │                            │                        │    │
+│  │    ├── RRF Fusion (k=60) ──────┤                        │    │
+│  │    ├── rerank (time decay) ─────┤                        │    │
+│  │    ├── Cross-Encoder rerank ────┤                        │    │
+│  │    └── Truncate → top_k ───────┘                        │    │
+│  │                                                         │    │
+│  │  🛠️  RETRIEVE ──  🧠  SAVE ──  📝  REFLECT            │    │
+│  │                                                         │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                                                                  │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
 │  │ LanceDB  │  │ fastembed│  │ RAG LLM │  │ Archive  │       │
-│  │ (vector) │  │ (ONNX)   │  │ (judge)  │  │ (.md)    │       │
+│  │(vec+FTS) │  │(emb+CE)  │  │(judge)   │  │ (.md)    │       │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -121,7 +139,7 @@ uv run pytest -v
 |-------|---------------|------------|
 | **Decision Agent** (Claude) | Diagnose, fix, decide what to save/reflect | ❌ Direct DB access |
 | **Memory Agent** (BugVault) | Retrieve, persist, evaluate, write rules | ❌ Fix bugs or make decisions |
-| **RAG Eval** | Returns confidence data only | ❌ Modifies Claude's response |
+| **RAG Eval** | Returns confidence + `suggested_action` | ❌ Modifies Claude's response |
 
 ---
 
@@ -132,20 +150,36 @@ uv run pytest -v
 When the Agent encounters a bug (or the user asks about past bugs), it calls this tool **independently on the BugVault side** — not by Claude itself. BugVault handles the full pipeline:
 
 ```
-1. embed query → 2. ANN search → 3. hybrid rerank + semantic threshold → 4. [optional] RAG evaluation
+1. embed query → 2. Vector ANN + FTS BM25 dual recall
+   → 3. RRF fusion (k=60) → 4. Cross-Encoder rerank
+   → 5. Truncate to top_k → 6. [optional] RAG evaluation
 ```
 
-**RAG evaluation** runs as an independent hook (not blocking Claude). It returns **tri-axis confidence data** so Claude knows exactly how trustworthy each result is:
+**New in v1.1 — metadata pre-filtering:**
 
-```json
-{
-  "rag_confidence_score": 8.5,       // context_relevance(3.5) + faithfulness(5.0)
-  "evaluation": "Doc1 is directly on-topic; Doc2 partially relevant...",
-  "context_relevance": 3.5,          // 0-5: how useful are the retrieved docs?
-  "faithfulness": 5.0,               // 0-5: is the info faithful to sources?
-  "justification": "Deducted points because Doc3 is off-topic..."
-}
+```python
+retrieve_bug_experience(
+    query="ModuleNotFoundError",
+    target_tech_stack="Python",      # ← new: filters by tech stack (case-insensitive)
+    target_project_name="order-svc",  # ← new: filters by project name
+    eval_depth="claim_level",         # ← new: CoT-based claim verification
+)
 ```
+
+**RAG evaluation** supports two strategies selectable via `eval_depth`:
+
+| `eval_depth` | Strategy | Token cost | Output |
+|---|---|---|---|
+| `"none"` | Skip | 0 | No evaluation block |
+| `"simple"` | Holistic scoring | ~300 | `context_relevance`(0-5) + `faithfulness`(0-5) + `justification` |
+| `"claim_level"` | CoT extraction + verification | ~1500 | ← above + `claims_analysis[]` with per-claim `{claim, supported, reason}` |
+
+**Claim-level** forces the judge LLM to:
+1. Extract atomic factual claims from the retrieved documents
+2. Verify each claim against source context (✅ supported / ❌ unsupported / ⚠️ partial)
+3. Compute `faithfulness = supported_claims / total_claims`
+
+See [v1.1 evaluation design](doc/02设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for details.
 
 ### 💾 `save_bug_experience` — Zero-Blocking Persistence
 

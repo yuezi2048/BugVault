@@ -45,7 +45,7 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - **⚡ Cross-Encoder Reranking** — Lightweight ONNX cross-encoder for 2nd-pass precision — see [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md)
 - **🧪 Claim-Level RAG Evaluation** — CoT-based claim extraction + verification with per-claim `Supported/Reason` — see [evaluation strategy](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
 - **🛡️ Double Fallback** — Quota-based + exception-based graceful degradation — never crash on LLM parse errors
-- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
+- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter design](docs/refer/设计/metadata-filtering.md) and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
 - **📊 Token Tracking** — `prompt_tokens` / `completion_tokens` / `total_tokens` returned per evaluation
 - **🧹 DB Maintenance** — `drop_table()` + concurrent batch rebuild via `scripts/rebuild_index.py`
 - **🔒 Path Safety** — Global `.expanduser().resolve()` + `mkdir(parents=True, exist_ok=True)` to prevent `~` and missing-directory crashes
@@ -119,8 +119,6 @@ uv run pytest -v
 ---
 
 ## Architecture: Two-Agent Collaboration
-
-```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Decision Agent (Claude)                       │
 │                                                                  │
@@ -166,13 +164,14 @@ uv run pytest -v
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+
 ### Key Principle: Clean Separation
 
-| Layer | Responsibility | Never Does |
-|-------|---------------|------------|
-| **Decision Agent** (Claude) | Diagnose, fix, decide what to save/reflect | ❌ Direct DB access |
-| **Memory Agent** (BugVault) | Retrieve, persist, evaluate, write rules | ❌ Fix bugs or make decisions |
-| **RAG Eval** | Returns confidence + `suggested_action` | ❌ Modifies Claude's response |
+| Layer                       | Responsibility                             | Never Does                   |
+| --------------------------- | ------------------------------------------ | ---------------------------- |
+| **Decision Agent** (Claude) | Diagnose, fix, decide what to save/reflect | ❌ Direct DB access           |
+| **Memory Agent** (BugVault) | Retrieve, persist, evaluate, write rules   | ❌ Fix bugs or make decisions |
+| **RAG Eval**                | Returns confidence + `suggested_action`    | ❌ Modifies Claude's response |
 
 ---
 
@@ -182,11 +181,9 @@ uv run pytest -v
 
 When the Agent encounters a bug (or the user asks about past bugs), it calls this tool **independently on the BugVault side** — not by Claude itself. BugVault handles the full pipeline:
 
-```
 1. embed query → 2. Vector ANN + FTS BM25 dual recall
    → 3. RRF fusion (k=60) → 4. Cross-Encoder rerank
    → 5. Truncate to top_k → 6. [optional] RAG evaluation
-```
 
 **New in v1.1 — metadata pre-filtering:**
 
@@ -212,7 +209,7 @@ retrieve_bug_experience(
 2. Verify each claim against source context (✅ supported / ❌ unsupported / ⚠️ partial)
 3. Compute `faithfulness = supported_claims / total_claims`
 
-See [v1.1 evaluation design](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for details.
+See [evaluation strategy](docs/refer/设计/evaluation-strategy.md) for full design details, and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for the system integration.
 
 ### 💾 `save_bug_experience` — Zero-Blocking Persistence
 

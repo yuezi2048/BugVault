@@ -59,6 +59,29 @@ _RETRIEVE_SCHEMA = {
                 "(more tokens, richer signal, session-capped)"
             ),
         },
+        "target_tech_stack": {
+            "type": "string",
+            "description": (
+                "CRITICAL: When you can infer the programming language, "
+                "framework, or runtime from the error message or code "
+                "context, you MUST pass it here to filter retrieval. "
+                "Examples: 'Python', 'Java', 'Go', 'TypeScript', "
+                "'Django', 'Spring Boot', 'Kubernetes'. "
+                "Case-insensitive. This eliminates cross-language "
+                "confusion (e.g. Python ModuleNotFoundError vs Java "
+                "ClassNotFoundException)."
+            ),
+        },
+        "target_project_name": {
+            "type": "string",
+            "description": (
+                "Optional: The specific project or service name to "
+                "narrow the search to (e.g. 'bugvault-v2', "
+                "'order-svc', 'frontend-api'). "
+                "Only records whose project_name field matches will "
+                "be searched. Case-insensitive."
+            ),
+        },
     },
     "required": ["query"],
 }
@@ -346,6 +369,8 @@ async def _handle_retrieve(
     """ANN search → hybrid rerank → optional async RAG eval → format text."""
     query = arguments.get("query", "")
     eval_depth = arguments.get("eval_depth", "simple")
+    target_tech_stack = arguments.get("target_tech_stack", "")
+    target_project_name = arguments.get("target_project_name", "")
 
     # ── Sync search + format runs in executor ────────────────────
     result = await loop.run_in_executor(
@@ -354,6 +379,8 @@ async def _handle_retrieve(
         db,
         embedding_svc,
         query,
+        target_tech_stack,
+        target_project_name,
     )
 
     # Early-exit for error / empty responses
@@ -385,10 +412,35 @@ async def _handle_retrieve(
     return [types.TextContent(type="text", text="\n".join(lines))]
 
 
+def _sanitise_filter_value(raw: str) -> str:
+    """Strip anything that isn't alphanumeric, space, underscore, hyphen, or dot."""
+    import re
+    return re.sub(r"[^a-zA-Z0-9_\-\s. ]", "", raw.strip())
+
+
+def _build_filter_clause(
+    target_tech_stack: str,
+    target_project_name: str,
+) -> str | None:
+    """Build a case-insensitive WHERE clause from optional filter values."""
+    clauses: list[str] = []
+    if target_tech_stack:
+        val = _sanitise_filter_value(target_tech_stack)
+        if val:
+            clauses.append(f"LOWER(tech_stack) LIKE '%{val.lower()}%'")
+    if target_project_name:
+        val = _sanitise_filter_value(target_project_name)
+        if val:
+            clauses.append(f"LOWER(project_name) LIKE '%{val.lower()}%'")
+    return " AND ".join(clauses) if clauses else None
+
+
 def _sync_search_and_format(
     db,
     embedding_svc,
     query: str,
+    target_tech_stack: str = "",
+    target_project_name: str = "",
 ) -> list[types.TextContent] | tuple[list[str], list[dict]]:
     """ANN search → hybrid rerank → format results into text lines.
 
@@ -413,7 +465,8 @@ def _sync_search_and_format(
         embedding_svc = EmbeddingService()
 
     query_emb = embedding_svc.generate_embedding(query)
-    results = db.search(query_emb)
+    filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
+    results = db.search(query_emb, filter_clause=filter_clause)
 
     if not results:
         logger.info("Retrieve: no results for query '%s'", query[:80])

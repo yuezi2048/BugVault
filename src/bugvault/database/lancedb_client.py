@@ -69,15 +69,29 @@ class LanceDBClient:
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def search(self, embedding: list[float]) -> list[dict]:
+    def search(
+        self,
+        embedding: list[float],
+        filter_clause: str | None = None,
+    ) -> list[dict]:
         """Perform ANN search with a pre-computed *embedding*.
+
+        Args:
+            embedding: The query vector.
+            filter_clause: Optional SQL filter applied *before* ANN search
+                (e.g. ``"LOWER(tech_stack) LIKE '%python%'"``).  Uses
+                LanceDB's native ``.where()`` — see DataFusion docs for
+                supported syntax.
 
         Returns raw rows from LanceDB (list of dicts).
         """
         if not self.is_ready:
             raise RuntimeError("BugVault is still initialising")
         with self._lock:
-            return self._table.search(embedding).limit(settings.top_k).to_list()  # type: ignore[union-attr]
+            query = self._table.search(embedding)
+            if filter_clause:
+                query = query.where(filter_clause)
+            return query.limit(settings.top_k).to_list()  # type: ignore[union-attr]
 
     def upsert_record(
         self,

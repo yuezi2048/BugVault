@@ -195,6 +195,7 @@ def main() -> None:
         )
         print(f"     Joined {len(joined)} questions with accepted answers")
         # Mark all question-type rows as INVALID, then mark joined ones as valid
+        # Only questions with matched answers should survive
         for idx, row in enumerate(rows):
             pt = row.get(args.col_post_type)
             if isinstance(pt, str):
@@ -202,14 +203,13 @@ def main() -> None:
                     pt = int(pt)
                 except (ValueError, TypeError):
                     pt = -1
-            if pt == args.post_type_question:
+            if pt in (args.post_type_question, args.post_type_answer):
                 row['_valid'] = False
         for idx_from, solution_text in joined:
             rows[idx_from][args.map_solution] = solution_text
             rows[idx_from]['_valid'] = True
-        # Remove invalid rows (questions without answers; non-question rows)
         rows = [r for r in rows if r.get('_valid', True)]
-        print(f"     After removing unanswered: {len(rows)} records")
+        print(f"     Questions with accepted answers: {len(rows)}")
 
     # ── Apply filters ─────────────────────────────────────────────
     if args.tech_stack_prefix:

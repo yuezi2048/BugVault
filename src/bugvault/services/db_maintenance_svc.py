@@ -69,6 +69,7 @@ def import_from_archive(
 
     # ── Step A: Concurrent parse + embed ─────────────────────────
     batch_data: list[dict] = []
+    batch_chunks: list[dict] = []
     failed: int = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -79,16 +80,18 @@ def import_from_archive(
         for future in concurrent.futures.as_completed(futures):
             path = futures[future]
             try:
-                data_dict = future.result()
-                if data_dict is not None:
-                    batch_data.append(data_dict)
+                result = future.result()
+                if result is not None:
+                    parent_dict, chunk_rows = result
+                    batch_data.append(parent_dict)
+                    batch_chunks.extend(chunk_rows)
                 else:
                     failed += 1
             except Exception:
                 logger.exception("Unexpected error processing %s", path)
                 failed += 1
 
-    # ── Step B: Batch upsert ─────────────────────────────────────
+    # ── Step B: Batch upsert (parent records) ───────────────────
     if not batch_data:
         logger.warning("No valid records parsed — nothing to import")
         return {
@@ -97,7 +100,7 @@ def import_from_archive(
         }
 
     logger.info(
-        "Inserting %d records into LanceDB in a single batch …",
+        "Inserting %d parent records into LanceDB …",
         len(batch_data),
     )
     # ── Dedup by record_id before batch insert ─────────────────
@@ -116,8 +119,30 @@ def import_from_archive(
         .when_not_matched_insert_all() \
         .execute(deduped_batch)  # type: ignore[arg-type]
 
-    # ── Rebuild FTS index after bulk load ───────────────────────
+    # ── Step C: Batch upsert (chunks) ─────────────────────────────
+    if batch_chunks:
+        logger.info(
+            "Inserting %d chunks into bugvault_chunks …",
+            len(batch_chunks),
+        )
+        # Dedup by chunk_id
+        seen_cid: set[str] = set()
+        deduped_chunks: list[dict] = []
+        for row in batch_chunks:
+            cid = row.get("chunk_id", "")
+            if cid in seen_cid:
+                continue
+            seen_cid.add(cid)
+            deduped_chunks.append(row)
+
+        client._chunks_table.merge_insert("chunk_id") \
+            .when_matched_update_all() \
+            .when_not_matched_insert_all() \
+            .execute(deduped_chunks)  # type: ignore[arg-type]
+
+    # ── Rebuild FTS indices after bulk load ──────────────────────
     client.create_fts_index(replace=True)
+    client.create_chunks_fts_index(replace=True)
 
     elapsed = time.perf_counter() - t0
     logger.info(
@@ -140,24 +165,26 @@ def import_from_archive(
 def _parse_and_embed(
     path: Path,
     embedding_svc: EmbeddingService,
-) -> dict | None:
-    """Parse a single ``.md`` into a LanceDB row dict (with vector).
+) -> tuple[dict, list[dict]] | None:
+    """Parse a single ``.md`` into a parent row dict + list of chunk row dicts.
 
-    Returns ``None`` on parse failure (already logged).
+    Returns ``(parent_dict, [chunk_dict, ...])`` on success, or ``None``
+    on parse / embedding failure (already logged).
     """
     record = _parse_markdown_to_record(path)
     if record is None:
         return None
 
+    # ── Parent record ────────────────────────────────────────────
     search_text = record.to_search_text()
     try:
-        embedding = embedding_svc.generate_embedding(search_text)
+        full_embedding = embedding_svc.generate_embedding(search_text)
     except Exception:
-        logger.exception("Embedding failed for %s", path.name)
+        logger.exception("Full-text embedding failed for %s", path.name)
         return None
 
-    return {
-        "vector": embedding,
+    parent_dict = {
+        "vector": full_embedding,
         "record_id": record.record_id or "",
         "bug_title": record.bug_title,
         "error_log_snippet": record.error_log_snippet,
@@ -169,6 +196,27 @@ def _parse_and_embed(
         "create_time": record.create_time,
         "search_text": search_text,
     }
+
+    # ── Chunk records (2 per parent) ─────────────────────────────
+    chunk_defs = record.to_chunks()
+    chunk_rows: list[dict] = []
+    for cd in chunk_defs:
+        try:
+            chunk_emb = embedding_svc.generate_embedding(cd["search_text"])
+        except Exception:
+            logger.exception("Chunk embedding failed for %s", path.name)
+            continue
+        chunk_rows.append({
+            "vector": chunk_emb,
+            "chunk_id": cd["chunk_id"],
+            "parent_id": cd["parent_id"],
+            "chunk_type": cd["chunk_type"],
+            "search_text": cd["search_text"],
+            "tech_stack": record.tech_stack or "",
+            "project_name": record.project_name or "",
+        })
+
+    return parent_dict, chunk_rows
 
 
 # ═══════════════════════════════════════════════════════════════════

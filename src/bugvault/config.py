@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # ── Retrieval ───────────────────────────────────────────────────
     top_k: int = 5
-    min_semantic_score: float = 0.65  # ANN relevance floor — docs below this are discarded
+    min_semantic_score: float = 0.50  # ANN relevance floor — docs below this are discarded
     enable_recency_decay: bool = False  # off by default — old bugs may still be valuable
     recency_weight: float = 0.3  # only used when enable_recency_decay is True
     semantic_weight: float = 0.7  # only used when enable_recency_decay is True

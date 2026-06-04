@@ -335,20 +335,45 @@ def _sync_save_validate(
 
 
 async def _async_embed_and_store(loop, executor, db, embedding_svc, record):
-    """Background task: generate embedding + LanceDB upsert.
+    """Background task: generate embedding + LanceDB upsert + chunk upsert.
 
     Never awaited by the caller — runs as a fire-and-forget coroutine.
     Failures are logged but do not propagate to the client.
+
+    .. versionchanged:: 1.1.1
+
+       Also generates two parent-child chunks (``error_log`` and
+       ``semantic``) and upserts them into ``bugvault_chunks``.
     """
     try:
         search_text = record.to_search_text()
+        chunk_defs = record.to_chunks()
 
         def _work():
-            embedding = embedding_svc.generate_embedding(search_text)
-            db.upsert_record(search_text, embedding, record)
+            # ── 1. Embed and upsert the full parent record ────────
+            full_emb = embedding_svc.generate_embedding(search_text)
+            db.upsert_record(search_text, full_emb, record)
+
+            # ── 2. Embed and upsert each chunk ────────────────────
+            chunk_rows: list[dict] = []
+            for cd in chunk_defs:
+                chunk_emb = embedding_svc.generate_embedding(cd["search_text"])
+                chunk_rows.append({
+                    "vector": chunk_emb,
+                    "chunk_id": cd["chunk_id"],
+                    "parent_id": cd["parent_id"],
+                    "chunk_type": cd["chunk_type"],
+                    "search_text": cd["search_text"],
+                    "tech_stack": record.tech_stack or "",
+                    "project_name": record.project_name or "",
+                })
+            db.upsert_chunks(chunk_rows)
 
         await loop.run_in_executor(executor, _work)
-        logger.info("Async embedding + storage completed: %s", record.bug_title)
+        logger.info(
+            "Async embedding + storage completed: %s (2 chunks upserted)",
+            record.bug_title,
+        )
     except Exception:
         logger.exception("Async embedding + storage failed: %s", record.bug_title)
 
@@ -467,30 +492,106 @@ def _sync_search_and_format(
     rerank_limit = settings.top_k * 4  # expand candidate pool for reranker
     filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
     query_emb = embedding_svc.generate_embedding(query)
-    vec_results = db.search(query_emb, filter_clause=filter_clause, limit=rerank_limit)
 
-    # ── FTS search (optional, with graceful fallback) ──────────────
-    fts_results: list[dict] = []
+    # ── Primary path: search chunks table ────────────────────────────
+    # Dual recall on bugvault_chunks (Vector + FTS at chunk level)
+    vec_chunks = db.search_chunks(
+        query_emb, filter_clause=filter_clause, limit=rerank_limit,
+    )
+    fts_chunks: list[dict] = []
     if settings.enable_fts:
         try:
-            fts_results = db.search_fts(
+            fts_chunks = db.search_chunks_fts(
                 query, filter_clause=filter_clause,
                 limit=rerank_limit,
             )
-            # Drop BM25 zero-score results
-            fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
+            fts_chunks = [r for r in fts_chunks if r.get("_score", 0) > 0]
         except Exception:
-            logger.warning("FTS search failed, falling back to vector-only")
+            logger.warning("Chunks FTS search failed, falling back to vector-only")
 
-    # ── RRF fusion ─────────────────────────────────────────────────
-    if fts_results:
+    # ── Chunk-level RRF fusion ──────────────────────────────────────
+    if fts_chunks:
         logger.info(
-            "Retrieve: vec=%d fts=%d — fusing via RRF(k=60)",
-            len(vec_results), len(fts_results),
+            "Retrieve chunks: vec=%d fts=%d — fusing via RRF(k=60)",
+            len(vec_chunks), len(fts_chunks),
         )
-        results = rrf_fusion(vec_results, fts_results)
+        chunk_results = rrf_fusion(vec_chunks, fts_chunks)
     else:
-        results = vec_results
+        chunk_results = vec_chunks
+
+    # Variables for format section (populated by either path)
+    vec_results: list[dict] = []
+    fts_results: list[dict] = []
+    ce_used = False
+
+    if not chunk_results:
+        # ── Fallback: search parent bug_records directly ──────────
+        logger.info("Chunks returned empty — falling back to bug_records search")
+        vec_results = db.search(query_emb, filter_clause=filter_clause, limit=rerank_limit)
+        if settings.enable_fts:
+            try:
+                fts_results = db.search_fts(
+                    query, filter_clause=filter_clause,
+                    limit=rerank_limit,
+                )
+                fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
+            except Exception:
+                logger.warning("FTS search failed, falling back to vector-only")
+        if fts_results:
+            results = rrf_fusion(vec_results, fts_results)
+        else:
+            results = vec_results
+    else:
+        # ── Parent-document mapping — group chunks by parent_id ────
+        parent_best: dict[str, dict] = {}
+        for ch in chunk_results:
+            pid = ch.get("parent_id", "") or ""
+            if not pid:
+                continue
+            # Keep the chunk with the best score per parent
+            if pid not in parent_best:
+                parent_best[pid] = ch
+            else:
+                existing = parent_best[pid]
+                prev_score = existing.get("_distance", 1.0) if "_distance" in existing else -existing.get("_rrf_score", 0.0)
+                cur_score = ch.get("_distance", 1.0) if "_distance" in ch else -ch.get("_rrf_score", 0.0)
+                if cur_score < prev_score:  # lower distance OR higher RRF (=less negative) wins
+                    parent_best[pid] = ch
+
+        # ── Fetch full parent records from bug_records ──────────────
+        parent_ids = list(parent_best.keys())
+        parent_records = db.fetch_records_by_ids(parent_ids)
+
+        # Build a lookup: record_id → full record
+        record_map: dict[str, dict] = {}
+        for rec in parent_records:
+            rid = rec.get("record_id", "") or ""
+            if rid:
+                record_map[rid] = rec
+
+        # Merge best chunk's score back onto the full record
+        results = []
+        for pid, best_chunk in parent_best.items():
+            full_rec = record_map.get(pid)
+            if full_rec is None:
+                continue
+            merged = dict(full_rec)  # shallow copy
+            if "_distance" in best_chunk:
+                merged["_distance"] = best_chunk["_distance"]
+            if "_rrf_score" in best_chunk:
+                merged["_rrf_score"] = best_chunk["_rrf_score"]
+            results.append(merged)
+
+        # Populate source count variables for format section
+        vec_results = vec_chunks
+        fts_results = fts_chunks
+
+        if not results:
+            logger.info("Chunks found but no matching parent records in bug_records")
+            return [types.TextContent(
+                type="text",
+                text="No matching bug experiences found in the knowledge base.",
+            )]
 
     if not results:
         logger.info("Retrieve: no results for query '%s'", query[:80])
@@ -515,7 +616,6 @@ def _sync_search_and_format(
         )
 
     # ── Cross-Encoder reranking (optional, lazy-loaded) ──────────
-    ce_used = False
     if settings.enable_reranker and results:
         try:
             from bugvault.services.reranker_svc import get_reranker

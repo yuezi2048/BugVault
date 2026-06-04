@@ -113,46 +113,6 @@ class BugRecord(BaseModel):
                 missing.append(field)
         return missing
 
-    def to_chunks(self) -> list[dict]:
-        """Split this bug record into searchable chunks (small-to-big RAG).
-
-        Returns a list of dicts ready for ``bugvault_chunks`` table::
-
-            [
-                {"chunk_id": "<md5>_err", "parent_id": "<record_id>",
-                 "chunk_type": "error", "search_text": "...",
-                 "tech_stack": "...", "project_name": "..."},
-                {"chunk_id": "<md5>_sol", "parent_id": "<record_id>",
-                 "chunk_type": "solution", "search_text": "...",
-                 "tech_stack": "...", "project_name": "..."},
-            ]
-        """
-        import hashlib
-        rid = self.record_id or hashlib.md5(self.bug_title.encode()).hexdigest()
-
-        chunks: list[dict] = [
-            {
-                "chunk_id": f"{rid}_err",
-                "parent_id": rid,
-                "chunk_type": "error",
-                "search_text": f"{self.bug_title}\n{self.error_log_snippet}",
-                "tech_stack": self.tech_stack or "",
-                "project_name": self.project_name or "",
-            },
-            {
-                "chunk_id": f"{rid}_sol",
-                "parent_id": rid,
-                "chunk_type": "solution",
-                "search_text": (
-                    f"{self.bug_title}\n{self.tried_methods}\n{self.final_solution}"
-                    + (f"\n{self.root_cause}" if self.root_cause else "")
-                ),
-                "tech_stack": self.tech_stack or "",
-                "project_name": self.project_name or "",
-            },
-        ]
-        return chunks
-
     def to_search_text(self) -> str:
         """Concatenate key fields into a single blob for embedding."""
         parts = [self.bug_title, self.error_log_snippet, self.tried_methods, self.final_solution]
@@ -160,46 +120,76 @@ class BugRecord(BaseModel):
             parts.append(self.root_cause)
         return "\n".join(parts)
 
-    def to_chunks(self) -> list[dict]:
-        """Generate two focused text chunks for parent-child vector retrieval.
+    CHUNK_MAX_SIZE: int = 800  # max chars per chunk before recursive split
 
-        Chunk A (``error_log`` type):
-            ``bug_title + "\\n" + error_log_snippet``
-            → for exact-error matching.
+    def to_chunks(self, max_size: int | None = None) -> list[dict]:
+        """Split this bug record into searchable chunks (small-to-big RAG).
 
-        Chunk B (``semantic`` type):
-            ``bug_title + "\\n" + tried_methods + "\\n" + final_solution``
-            → for semantic-similarity matching (same-class problems).
+        - Chunk A (``error_log``): ``bug_title + error_log_snippet``
+        - Chunk(s) B (``semantic``): ``bug_title + tried + solution``
+          → auto-split at paragraph boundary if exceeds ``max_size`` chars.
 
-        Returns a list of dicts, each with:
-            chunk_id, parent_id (self.record_id), chunk_type, search_text.
+        Every chunk carries full ``bug_title`` header for context.
         """
         import hashlib
 
+        max_size = max_size or self.CHUNK_MAX_SIZE
+        preamble = self.bug_title
+
         chunks: list[dict] = []
 
-        # ── Chunk A: error_log ──────────────────────────────────────
-        error_text = f"{self.bug_title}\n{self.error_log_snippet}"
-        error_chunk_id = hashlib.md5(
-            f"{self.record_id}_error_log".encode()
-        ).hexdigest()
-        chunks.append({
-            "chunk_id": error_chunk_id,
-            "parent_id": self.record_id or "",
-            "chunk_type": "error_log",
-            "search_text": error_text,
-        })
+        def _add(ctype: str, text: str, idx: int = 0) -> None:
+            raw = f"{preamble}\n{text}"
+            cid = hashlib.md5(f"{self.record_id}_{ctype}_{idx}".encode()).hexdigest()
+            chunks.append({
+                "chunk_id": cid,
+                "parent_id": self.record_id or "",
+                "chunk_type": ctype,
+                "search_text": raw,
+                "tech_stack": self.tech_stack or "",
+                "project_name": self.project_name or "",
+            })
 
-        # ── Chunk B: semantic ───────────────────────────────────────
-        semantic_text = f"{self.bug_title}\n{self.tried_methods}\n{self.final_solution}"
-        semantic_chunk_id = hashlib.md5(
-            f"{self.record_id}_semantic".encode()
-        ).hexdigest()
-        chunks.append({
-            "chunk_id": semantic_chunk_id,
-            "parent_id": self.record_id or "",
-            "chunk_type": "semantic",
-            "search_text": semantic_text,
-        })
+        # ── Chunk A: error_log (always 1 chunk) ─────────────────
+        _add("error_log", self.error_log_snippet)
+
+        # ── Chunk(s) B: semantic (recursive split if too long) ──
+        body = f"{self.tried_methods}\n{self.final_solution}"
+        if self.root_cause:
+            body += f"\n{self.root_cause}"
+
+        if len(body) <= max_size:
+            _add("semantic", body)
+        else:
+            # Recursive split at paragraph boundary (\n\n)
+            segments = _split_at_boundary(body, max_size)
+            for idx, seg in enumerate(segments):
+                _add("semantic", seg, idx)
 
         return chunks
+
+
+def _split_at_boundary(text: str, max_size: int) -> list[str]:
+    """Split *text* into chunks ≤ *max_size* at paragraph (\\n\\n) boundaries.
+
+    Falls back to sentence boundary (\\n) then character boundary if needed.
+    """
+    if len(text) <= max_size:
+        return [text]
+
+    # Try paragraph break first
+    para_break = text.rfind("\n\n", 0, max_size)
+    if para_break > max_size * 0.3:  # meaningful split point
+        head = text[:para_break]
+        tail = text[para_break + 2:]
+        return [head] + _split_at_boundary(tail, max_size)
+
+    # Fallback: line break
+    line_break = text.rfind("\n", 0, max_size)
+    if line_break > max_size * 0.3:
+        head = text[:line_break]
+        tail = text[line_break + 1:]
+        return [head] + _split_at_boundary(tail, max_size)
+
+    # Last resort: hard character split
+    return [text[:max_size]] + _split_at_boundary(text[max_size:], max_size)

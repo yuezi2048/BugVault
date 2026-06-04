@@ -8,7 +8,8 @@ import tempfile
 from pathlib import Path
 
 # ── Point to the project root ──────────────────────────────────────
-PROJECT_ROOT = Path("/home/ljy/Documents/myprogram/my-demo/BugVault")
+# This script is designed to run via ``uv run python tests/run_sample_test.py``.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── Must import stdout_guard BEFORE anything else ─────────────────

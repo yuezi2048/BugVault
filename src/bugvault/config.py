@@ -67,13 +67,15 @@ class Settings(BaseSettings):
     enable_reflection_tool: bool = True
 
     def model_post_init(self, _ctx) -> None:
+        # ── Resolve ~ and symlinks BEFORE any use ─────────────────
+        self.data_root = self.data_root.expanduser().resolve()
         if not self.db_uri:
             self.db_uri = str(self.data_root / "lancedb")
         if not self.markdown_archive_dir:
             self.markdown_archive_dir = str(self.data_root / "archive")
         # Ensure data dirs exist at config time
         self.data_root.mkdir(parents=True, exist_ok=True)
-        Path(self.markdown_archive_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.markdown_archive_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

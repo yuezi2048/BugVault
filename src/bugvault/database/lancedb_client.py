@@ -34,6 +34,7 @@ class LanceDBClient:
 
     def __init__(self) -> None:
         self._table = None
+        self._db = None
         self._lock = threading.Lock()
 
     # ── Lifecycle ───────────────────────────────────────────────────
@@ -44,6 +45,22 @@ class LanceDBClient:
         Called once during server startup.  Embedding-model warm-up is
         handled separately by ``EmbeddingService``.
         """
+        self._init_table()
+
+    def drop_table(self) -> None:
+        """Drop the entire table and re-create an empty one.
+
+        This is the most thorough way to clear all data — no stale
+        records survive. Safe to call when the table doesn't exist.
+        """
+        if self._db is not None:
+            try:
+                if self.TABLE_NAME in self._db.list_tables().tables:
+                    self._db.drop_table(self.TABLE_NAME)
+                    logger.info("Dropped table: %s", self.TABLE_NAME)
+            except Exception:
+                logger.exception("Failed to drop table (non-fatal, will recreate)")
+        self._table = None
         self._init_table()
 
     @property
@@ -105,13 +122,13 @@ class LanceDBClient:
     # ── Internal helpers ────────────────────────────────────────────
 
     def _init_table(self) -> None:
-        db = lancedb.connect(settings.db_uri)
+        self._db = lancedb.connect(settings.db_uri)
         logger.info("LanceDB connected at: %s", settings.db_uri)
 
-        existing = db.list_tables()
+        existing = self._db.list_tables()
         existing_names: list[str] = existing.tables
         if self.TABLE_NAME in existing_names:
-            self._table = db.open_table(self.TABLE_NAME)
+            self._table = self._db.open_table(self.TABLE_NAME)
             logger.info("Opened existing table: %s", self.TABLE_NAME)
         else:
             schema = pa.schema([
@@ -127,5 +144,5 @@ class LanceDBClient:
                 pa.field("create_time", pa.utf8()),
                 pa.field("search_text", pa.utf8()),
             ])
-            self._table = db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
+            self._table = self._db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
             logger.info("Created new table: %s", self.TABLE_NAME)

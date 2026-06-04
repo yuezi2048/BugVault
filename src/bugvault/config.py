@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     # ── Retrieval ───────────────────────────────────────────────────
     top_k: int = 5
     min_semantic_score: float = 0.65  # ANN relevance floor — docs below this are discarded
-    recency_weight: float = 0.3
-    semantic_weight: float = 0.7
+    enable_recency_decay: bool = False  # off by default — old bugs may still be valuable
+    recency_weight: float = 0.3  # only used when enable_recency_decay is True
+    semantic_weight: float = 0.7  # only used when enable_recency_decay is True
     recency_half_life_days: int = 90  # weight halves after N days
 
     # ── Truncation ──────────────────────────────────────────────────
@@ -51,6 +52,9 @@ class Settings(BaseSettings):
     eval_llm_model: str = "gpt-4o-mini"
     eval_llm_base_url: str = ""  # defaults to OpenAI
     eval_top_k: int = 3  # evaluate top N retrieved records
+
+    # ── Claim-Level Eval Circuit Breaker ────────────────────────────
+    max_claim_evals_per_session: int = 10  # session-wide cap for claim_level
 
     # ── Reflection Tool ─────────────────────────────────────────────
     enable_reflection_tool: bool = True

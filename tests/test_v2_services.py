@@ -64,93 +64,286 @@ class TestReflectionService:
 
 
 # ===================================================================
-#  RAGEvaluator
+#  Shared helpers
 # ===================================================================
 
-class TestRAGEvaluator:
-    """Test RAGEvaluator parsing and edge cases (no live API call)."""
+class TestFormatContext:
+    """Test the format_context helper."""
 
-    def test_disabled_returns_empty(self):
-        """When enable_rag_eval is False, evaluate returns None fields."""
-        from bugvault.config import settings
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+    def test_format_context_basic(self):
+        from bugvault.services.rag_evaluator_svc import format_context
 
-        old = settings.enable_rag_eval
-        settings.enable_rag_eval = False
-        try:
-            evaluator = RAGEvaluator()
-            result = evaluator.evaluate_sync("test query", [])
-            assert result.rag_confidence_score is None
-            assert result.evaluation is None
-        finally:
-            settings.enable_rag_eval = old
+        results = [
+            {"bug_title": "Bug A", "error_log_snippet": "Error A", "final_solution": "Fix A"},
+            {"bug_title": "Bug B", "error_log_snippet": "Error B", "final_solution": "Fix B"},
+        ]
+        context = format_context(results, top_k=3)
+        assert "Document 1" in context
+        assert "Document 2" in context
+        assert "Bug A" in context
+        assert "Fix B" in context
+        assert "Document 3" not in context  # only 2 results, top_k=3
 
-    def test_empty_results_returns_empty(self):
-        from bugvault.config import settings
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+    def test_format_context_respects_top_k(self):
+        from bugvault.services.rag_evaluator_svc import format_context
 
-        old_enable = settings.enable_rag_eval
-        old_key = settings.eval_llm_api_key
-        settings.enable_rag_eval = True
-        settings.eval_llm_api_key = "sk-test"
-        try:
-            evaluator = RAGEvaluator()
-            result = evaluator.evaluate_sync("query", [])
-            assert result.rag_confidence_score is None
-        finally:
-            settings.enable_rag_eval = old_enable
-            settings.eval_llm_api_key = old_key
+        results = [
+            {"bug_title": f"Bug {i}", "error_log_snippet": "", "final_solution": ""}
+            for i in range(5)
+        ]
+        context = format_context(results, top_k=2)
+        assert "Document 1" in context
+        assert "Document 2" in context
+        assert "Document 3" not in context
+
+    def test_format_context_handles_missing_fields(self):
+        from bugvault.services.rag_evaluator_svc import format_context
+
+        results = [{"bug_title": "Only Title"}]
+        context = format_context(results, top_k=5)
+        assert "Only Title" in context
+        assert "Error:" in context  # empty string but key exists via .get()
+
+
+class TestExtractTitles:
+    """Test the _extract_titles helper."""
+
+    def test_extract_titles(self):
+        from bugvault.services.rag_evaluator_svc import _extract_titles
+
+        context = (
+            "Document 1:\n"
+            "Title: Bug A\n"
+            "Error: ...\n"
+            "\n"
+            "Document 2:\n"
+            "Title: Bug B\n"
+            "Error: ...\n"
+        )
+        titles = _extract_titles(context)
+        assert titles == ["Bug A", "Bug B"]
+
+    def test_extract_titles_empty(self):
+        from bugvault.services.rag_evaluator_svc import _extract_titles
+
+        assert _extract_titles("No titles here") == []
+
+
+# ===================================================================
+#  SimpleRAGEvalStrategy
+# ===================================================================
+
+class TestSimpleRAGEvalStrategy:
+    """Test SimpleRAGEvalStrategy parsing and prompt building (no live API)."""
 
     def test_parse_valid_json(self):
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+        from bugvault.services.rag_evaluator_svc import SimpleRAGEvalStrategy
 
         raw = (
             '{"context_relevance": 4.0, "faithfulness": 3.5, '
             '"justification": "Doc 2 is partially off-topic."}'
         )
-        result = RAGEvaluator._parse_response(raw)
+        result = SimpleRAGEvalStrategy._parse_response(raw)
         assert result.rag_confidence_score == 7.5  # 4.0 + 3.5
         assert result.context_relevance == 4.0
         assert result.faithfulness == 3.5
         assert "off-topic" in (result.evaluation or "")
+        assert result.strategy_used == "simple"  # default
 
     def test_parse_with_markdown_fences(self):
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+        from bugvault.services.rag_evaluator_svc import SimpleRAGEvalStrategy
 
         raw = (
             '```json\n{"context_relevance": 3.0, "faithfulness": 4.0, '
             '"justification": "Relevant but verbose."}\n```'
         )
-        result = RAGEvaluator._parse_response(raw)
+        result = SimpleRAGEvalStrategy._parse_response(raw)
         assert result.rag_confidence_score == 7.0  # 3.0 + 4.0
         assert result.context_relevance == 3.0
         assert result.faithfulness == 4.0
 
     def test_parse_invalid_json_returns_fallback(self):
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+        from bugvault.services.rag_evaluator_svc import SimpleRAGEvalStrategy
 
-        result = RAGEvaluator._parse_response("not json at all")
+        result = SimpleRAGEvalStrategy._parse_response("not json at all")
         assert result.rag_confidence_score == 0.0
         assert result.evaluation == "parse_error"
 
-    def test_build_prompt_contains_query_and_results(self):
-        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+    def test_parse_clamps_scores(self):
+        from bugvault.services.rag_evaluator_svc import SimpleRAGEvalStrategy
+
+        raw = (
+            '{"context_relevance": 10.0, "faithfulness": -1.0, '
+            '"justification": "Out of range test."}'
+        )
+        result = SimpleRAGEvalStrategy._parse_response(raw)
+        assert result.context_relevance == 5.0  # clamped
+        assert result.faithfulness == 0.0  # clamped
+
+    def test_build_prompt_contains_query_and_context(self):
+        from bugvault.services.rag_evaluator_svc import SimpleRAGEvalStrategy
+
+        strategy = SimpleRAGEvalStrategy(
+            api_key="sk-test", model="gpt-4o-mini",
+            base_url="https://api.openai.com/v1",
+            top_k=3, timeout=15.0,
+            log_path=Path("/tmp/test_rag_eval.jsonl"),
+        )
+        context = (
+            "Document 1:\n"
+            "Title: test\n"
+            "Error: err\n"
+            "Solution: sol"
+        )
+        messages = strategy._build_prompt("KeyError on missing key", context)
+        assert len(messages) == 2
+        assert messages[1]["role"] == "user"
+        assert "KeyError on missing key" in messages[1]["content"]
+        assert "test" in messages[1]["content"]
+
+
+# ===================================================================
+#  ClaimLevelRAGEvalStrategy
+# ===================================================================
+
+class TestClaimLevelRAGEvalStrategy:
+    """Test ClaimLevelRAGEvalStrategy parsing and prompt building (no live API)."""
+
+    def test_parse_valid_claims(self):
+        from bugvault.services.rag_evaluator_svc import ClaimLevelRAGEvalStrategy
+
+        raw = (
+            '{\n'
+            '  "claims_analysis": [\n'
+            '    {"claim": "ValueError is raised on missing key", "supported": true, "reason": "Explicitly stated in doc 1"},\n'
+            '    {"claim": "Python 3.11+ required", "supported": false, "reason": "No version info in retrieved docs"},\n'
+            '    {"claim": "Use .get() to avoid", "supported": true, "reason": "Mentioned in solution section"}\n'
+            '  ],\n'
+            '  "faithfulness": 0.67,\n'
+            '  "context_relevance": 4.0,\n'
+            '  "justification": "One unsupported claim about version requirement."\n'
+            '}'
+        )
+        result = ClaimLevelRAGEvalStrategy._parse_claim_response(raw, "test query")
+        # 2 out of 3 supported → 0.6667
+        assert result.faithfulness == pytest.approx(0.6667, rel=1e-3)
+        assert result.context_relevance == 4.0
+        assert result.rag_confidence_score == pytest.approx(
+            0.6667 * 5.0 + 4.0, rel=1e-3
+        )  # faithfulness*5 + cr
+        assert result.claims_analysis is not None
+        assert len(result.claims_analysis) == 3
+        # strategy_used is set by evaluate(), not the static parser
+        # assert result.strategy_used == "claim_level"
+
+    def test_parse_empty_claims(self):
+        from bugvault.services.rag_evaluator_svc import ClaimLevelRAGEvalStrategy
+
+        raw = (
+            '{\n'
+            '  "claims_analysis": [],\n'
+            '  "faithfulness": 0.0,\n'
+            '  "context_relevance": 2.0,\n'
+            '  "justification": "No relevant documents found."\n'
+            '}'
+        )
+        result = ClaimLevelRAGEvalStrategy._parse_claim_response(raw, "test query")
+        assert result.faithfulness == 0.0
+        assert result.context_relevance == 2.0
+        assert result.claims_analysis == []
+
+    def test_parse_invalid_json_returns_parse_error(self):
+        from bugvault.services.rag_evaluator_svc import ClaimLevelRAGEvalStrategy
+
+        result = ClaimLevelRAGEvalStrategy._parse_claim_response(
+            "not json at all", "query"
+        )
+        assert result.rag_confidence_score == 0.0
+        assert result.evaluation == "parse_error"
+        assert result.claims_analysis == []
+
+    def test_build_prompt_contains_claim_instructions(self):
+        from bugvault.services.rag_evaluator_svc import ClaimLevelRAGEvalStrategy
+
+        strategy = ClaimLevelRAGEvalStrategy(
+            api_key="sk-test", model="gpt-4o-mini",
+            base_url="https://api.openai.com/v1",
+            top_k=3, timeout=15.0,
+            log_path=Path("/tmp/test_rag_eval.jsonl"),
+        )
+        messages = strategy._build_claim_prompt(
+            "KeyError test",
+            "Document 1:\nTitle: test\nError: err\nSolution: sol",
+        )
+        assert len(messages) == 2
+        content = messages[0]["content"]
+        assert "Claim Extraction" in content
+        assert "Claim Verification" in content
+        assert "claims_analysis" in content
+        user_content = messages[1]["content"]
+        assert "KeyError test" in user_content
+        assert "test" in user_content
+
+    def test_parse_handles_missing_claims_key(self):
+        """LLM output missing claims_analysis key should not crash."""
+        from bugvault.services.rag_evaluator_svc import ClaimLevelRAGEvalStrategy
+
+        raw = '{"context_relevance": 4.0, "faithfulness": 0.8, "justification": "OK"}'
+        result = ClaimLevelRAGEvalStrategy._parse_claim_response(raw, "query")
+        assert result.claims_analysis == []
+        # faithfulness is computed from claims_analysis, not from the JSON field
+        # empty claims → 0.0 faithfulness
+        assert result.faithfulness == 0.0
+        assert result.context_relevance == 4.0
+
+
+# ===================================================================
+#  RAGEvaluator — facade + circuit breaker
+# ===================================================================
+
+class TestRAGEvaluatorFacade:
+    """Test RAGEvaluator facade behavior, circuit breaker, and edge cases."""
+
+    def test_disabled_returns_empty(self):
+        """When enable_rag_eval is False, evaluate returns None fields."""
+        import asyncio
 
         from bugvault.config import settings
-        old_enable = settings.enable_rag_eval
+        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+
+        old = settings.enable_rag_eval
+        settings.enable_rag_eval = False
         old_key = settings.eval_llm_api_key
-        settings.enable_rag_eval = True
         settings.eval_llm_api_key = "sk-test"
         try:
             evaluator = RAGEvaluator()
-            messages = evaluator._build_prompt(
-                "KeyError on missing key",
-                [{"bug_title": "test", "error_log_snippet": "err", "final_solution": "sol"}],
+            result = asyncio.run(
+                evaluator.evaluate("test query", "some context", "simple")
             )
-            assert len(messages) == 2
-            assert messages[1]["role"] == "user"
-            assert "KeyError on missing key" in messages[1]["content"]
-            assert "test" in messages[1]["content"]
+            assert result.rag_confidence_score is None
+            assert result.evaluation is None
+            assert result.strategy_used == "simple"
         finally:
-            settings.enable_rag_eval = old_enable
+            settings.enable_rag_eval = old
+            settings.eval_llm_api_key = old_key
+
+    def test_no_api_key_returns_empty(self):
+        """When api_key is empty, evaluate returns empty result."""
+        import asyncio
+
+        from bugvault.config import settings
+        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+
+        old = settings.enable_rag_eval
+        settings.enable_rag_eval = True
+        old_key = settings.eval_llm_api_key
+        settings.eval_llm_api_key = ""
+        try:
+            evaluator = RAGEvaluator()
+            result = asyncio.run(
+                evaluator.evaluate("test query", "context", "simple")
+            )
+            assert result.rag_confidence_score is None
+        finally:
+            settings.enable_rag_eval = old
             settings.eval_llm_api_key = old_key

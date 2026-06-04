@@ -663,7 +663,9 @@ async def main():
         # RAG evaluation
         if rag_eval.enabled:
             try:
-                eval_result = rag_eval.evaluate_sync(q, results)
+                from bugvault.services.rag_evaluator_svc import format_context
+                context = format_context(results, rag_eval.top_k)
+                eval_result = await rag_eval.evaluate(q, context, "simple")
                 if eval_result.rag_confidence_score is not None:
                     print(f"\n  📊 RAG Evaluation:")
                     print(f"     Confidence: {eval_result.rag_confidence_score:.1f}/10")

@@ -50,7 +50,6 @@ def rerank(
     scored: list[tuple[float, dict]] = []
 
     for row in results:
-        recency = time_decay_score(row.get("create_time", ""))
         # `_distance` is the ANN distance from LanceDB (lower = more similar)
         # Convert to a similarity score in [0, 1]
         semantic = 1.0 - row.get("_distance", 0.0) / 2.0
@@ -60,10 +59,15 @@ def rerank(
         if semantic < settings.min_semantic_score:
             continue
 
-        combined = (
-            settings.semantic_weight * semantic
-            + settings.recency_weight * recency
-        )
+        if settings.enable_recency_decay:
+            recency = time_decay_score(row.get("create_time", ""))
+            combined = (
+                settings.semantic_weight * semantic
+                + settings.recency_weight * recency
+            )
+        else:
+            # No time decay — score is purely semantic
+            combined = semantic
         scored.append((combined, row))
 
     # Sort descending by combined score

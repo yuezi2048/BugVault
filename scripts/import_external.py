@@ -216,12 +216,11 @@ def main() -> None:
         _filter_by_tech_stack(rows, args.tech_stack_prefix, args.map_tags)
         print(f"     After tech_stack filter: {len(rows)} records")
 
-    # ── Parse & batch embed ──────────────────────────────────────
-    print("  🧠 Generating embeddings (batch inference) …")
+    # ── Parse records ────────────────────────────────────────────
+    print(f"  🧠 Parsing {len(rows)} records …")
     t_embed = time.perf_counter()
-    BATCH_SIZE = 64  # fastembed optimal batch size for CPU
+    dim = settings.embedding_dim
 
-    # First pass: parse all records and collect search texts
     records: list[tuple[BugRecord, str] | None] = []
     for i, row in enumerate(rows):
         if args.extract_so_fields and args.format == "hf":
@@ -242,37 +241,23 @@ def main() -> None:
             continue
         records.append((record, record.to_search_text()))
 
-    # Second pass: parallel batch inference via fastembed
-    texts = [r[1] for r in records if r is not None]
-    if texts:
-        if args.workers > 1:
-            embeddings = _parallel_embed(embedding_svc, texts, args.workers)
-        else:
-            embeddings_iter = embedding_svc._model.embed(texts, batch_size=BATCH_SIZE)
-            embeddings = list(embeddings_iter)  # type: ignore[arg-type]
-    else:
-        embeddings = []
+    # ── Parent records need a vector field for LanceDB schema compliance,
+    #    but the retrieval pipeline only searches bugvault_chunks.
+    #    Zero vector avoids wasteful ONNX inference on long parent texts.
+    dummy_vector = [0.0] * settings.embedding_dim
 
-    # Third pass: assemble batch_data from parsed records + embeddings
+    # Third pass: assemble batch_data (parent records get dummy vectors)
     batch_data: list[dict] = []
     failed = 0
-    emb_idx = 0
     for i, record_tuple in enumerate(records):
         if record_tuple is None:
             failed += 1
             continue
 
         record, search_text = record_tuple
-        try:
-            embedding = embeddings[emb_idx]  # type: ignore[index]
-            emb_idx += 1
-        except (IndexError, Exception):
-            logger.exception("Embedding missing for record %d", i)
-            failed += 1
-            continue
 
         batch_data.append({
-            "vector": embedding,
+            "vector": dummy_vector,  # ← zero vector, never used for search
             "record_id": record.record_id or "",
             "bug_title": record.bug_title,
             "error_log_snippet": record.error_log_snippet,
@@ -288,7 +273,7 @@ def main() -> None:
         if (i + 1) % 1000 == 0:
             print(f"     Progress: {i + 1}/{len(records)} ({record.bug_title[:40]})")
 
-    print(f"     Embedded {len(batch_data)} records ({time.perf_counter() - t_embed:.1f}s)")
+    print(f"     Parsed {len(batch_data)} records ({time.perf_counter() - t_embed:.1f}s, zero-vector parents)")
 
     # ── Generate + embed + upsert chunks (dual-write) ────────────
     if batch_data and embedding_svc:

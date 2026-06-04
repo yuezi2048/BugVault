@@ -348,6 +348,38 @@ class TestRAGEvaluatorFacade:
             settings.enable_rag_eval = old
             settings.eval_llm_api_key = old_key
 
+    def test_quota_exhausted_falls_back_to_simple(self):
+        """When max_claim_evals_per_session=0, claim_level degrades to simple."""
+        import asyncio
+
+        from bugvault.config import settings
+        from bugvault.services.rag_evaluator_svc import RAGEvaluator
+
+        old_enable = settings.enable_rag_eval
+        old_key = settings.eval_llm_api_key
+        old_max = settings.max_claim_evals_per_session
+
+        settings.enable_rag_eval = True
+        settings.eval_llm_api_key = "sk-test"
+        settings.max_claim_evals_per_session = 0
+        RAGEvaluator._claim_counter = 0  # reset before test
+
+        try:
+            evaluator = RAGEvaluator()
+            result = asyncio.run(
+                evaluator.evaluate("query", "some context", "claim_level")
+            )
+            # Quota exhausted → falls back to simple → dummy API fails → empty
+            assert result.strategy_used == "simple", (
+                f"Expected 'simple' fallback, got '{result.strategy_used}'"
+            )
+            assert result.rag_confidence_score is None
+        finally:
+            settings.enable_rag_eval = old_enable
+            settings.eval_llm_api_key = old_key
+            settings.max_claim_evals_per_session = old_max
+            RAGEvaluator._claim_counter = 0  # clean up for other tests
+
 
 # ===================================================================
 #  Metadata filter helpers

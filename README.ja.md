@@ -53,9 +53,9 @@ BugVault はバグ修正ライフサイクル全体をカバーする 3 つの M
 
 ### v1.1 新機能
 
-- **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](docs/refer/02設計/04.v1.1-architecture.md) 参照
-- **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](docs/refer/02設計/adr-cross-encoder-vs-colbert.md) 参照
-- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](docs/refer/02設計/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
+- **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) 参照
+- **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](docs/refer/设计/adr-cross-encoder-vs-colbert.md) 参照
+- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](docs/refer/设计/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
 - **🛡️ 二重フォールバック** — クォータ制限 + 例外捕捉、LLM 解析失敗時もメインスレッドをブロックしない
 - **🔍 メタデータ事前フィルター** — `target_tech_stack` + `target_project_name`、大文字小文字を区別せず SQL インジェクション対策済み
 - **📊 Token 統計** — 評価ごとに `prompt_tokens` / `completion_tokens` / `total_tokens` を返却
@@ -362,11 +362,11 @@ uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
 
 | 判断 | 理由 | 参考 |
 |------|------|------|
-| **なぜ MCP なのか？** | "Write once, run everywhere" — あらゆる MCP クライアントで動作。ローカル stdio 通信、ポート不要、ネットワーク不要。 | [why-not-skill.md](docs/refer/分析/02.なぜskillではないのか.md) |
-| **なぜ LanceDB なのか？** | ゼロ運用の組込データベース（ベクトル版 SQLite）。MVCC でロックフリー同時実行。ネイティブ FTS + メタデータフィルタリング。 | [why-lancedb.md](docs/refer/分析/03.なぜLanceDBなのか.md) |
-| **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](docs/refer/分析/04.なぜSDKなのか.md) |
-| **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](docs/refer/02設計/adr-cross-encoder-vs-colbert.md) |
-| **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](docs/refer/02設計/04.v1.1-architecture.md) |
+| **なぜ MCP なのか？** | "Write once, run everywhere" — あらゆる MCP クライアントで動作。ローカル stdio 通信、ポート不要、ネットワーク不要。 | [why-not-skill.md](docs/refer/分析/02.为什么不做成skill.md) |
+| **なぜ LanceDB なのか？** | ゼロ運用の組込データベース（ベクトル版 SQLite）。MVCC でロックフリー同時実行。ネイティブ FTS + メタデータフィルタリング。 | [why-lancedb.md](docs/refer/分析/03.为什么选择LanceDB.md) |
+| **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](docs/refer/分析/04.为什么选择SDK.md) |
+| **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
+| **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) |
 |------|------|
 | **なぜ `threading.Lock` が必要？** | LanceDB の `_table` は並行アクセス時に最新バージョンを保証しない |
 | **なぜ `mode='overwrite'`？** | `drop_table + create_table` が古いバージョン参照を残し "file not found" の原因に |

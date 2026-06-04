@@ -372,7 +372,7 @@ uv run pytest tests/test_integration.py -v          # 集成测试（~15s）
 
 | 决策 | 理由 | 参考文档 |
 |------|------|----------|
-| **为什么用 MCP 而非 Skill/插件？** | "一次编写，处处运行"——所有 MCP 客户端开箱即用。纯本地 stdio 通信，不暴露端口，不依赖网络。 | [为什么不做 skill](docs/refer/分析/02.为什么做成skill.md) |
+| **为什么用 MCP 而非 Skill/插件？** | "一次编写，处处运行"——所有 MCP 客户端开箱即用。纯本地 stdio 通信，不暴露端口，不依赖网络。 | [为什么不做 skill](docs/refer/分析/02.为什么不做成skill.md) |
 | **为什么用 LanceDB 而非 Chroma/FAISS？** | 零运维嵌入式数据库（向量界的 SQLite），进程内嵌无需 Docker。MVCC 无锁并发读写。列式存储原生支持元数据过滤 + FTS。 | [为什么选择 LanceDB](docs/refer/分析/03.为什么选择LanceDB.md) |
 | **为什么不用 LangChain/LangGraph？** | 线性 CRUD + 向量搜索——框架在这里只会增加抽象层。MCP 不是 Agent 框架；BugVault 是工具端点，不是推理引擎。 | [为什么选择 SDK](docs/refer/分析/04.为什么选择SDK.md) |
 | **为什么用 fastembed ONNX 而非 OpenAI 嵌入？** | 本地推理，零 API 费用，离线可用。ONNX 纯 CPU 运行，无需 GPU。 | — |

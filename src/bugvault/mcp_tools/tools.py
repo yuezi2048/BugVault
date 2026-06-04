@@ -464,9 +464,10 @@ def _sync_search_and_format(
         from bugvault.services.embedding_svc import EmbeddingService
         embedding_svc = EmbeddingService()
 
+    rerank_limit = settings.top_k * 4  # expand candidate pool for reranker
     filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
     query_emb = embedding_svc.generate_embedding(query)
-    vec_results = db.search(query_emb, filter_clause=filter_clause)
+    vec_results = db.search(query_emb, filter_clause=filter_clause, limit=rerank_limit)
 
     # ── FTS search (optional, with graceful fallback) ──────────────
     fts_results: list[dict] = []
@@ -474,7 +475,7 @@ def _sync_search_and_format(
         try:
             fts_results = db.search_fts(
                 query, filter_clause=filter_clause,
-                limit=settings.top_k * 2,
+                limit=rerank_limit,
             )
             # Drop BM25 zero-score results
             fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
@@ -513,8 +514,36 @@ def _sync_search_and_format(
             pre_count - after_count, pre_count, after_count,
         )
 
+    # ── Cross-Encoder reranking (optional, lazy-loaded) ──────────
+    ce_used = False
+    if settings.enable_reranker and results:
+        try:
+            from bugvault.services.reranker_svc import get_reranker
+            reranker = get_reranker()
+            if reranker is not None:
+                results = reranker.rerank(query, results)
+                ce_used = True
+                logger.info("Cross-Encoder reranked %d candidates", len(results))
+        except Exception:
+            logger.warning("Cross-Encoder reranking failed — using RRF order")
+
+    # ── Truncate to final top_k ─────────────────────────────────
+    results = results[:settings.top_k]
+
     # ── format results into text lines ─────────────────────────────
     lines: list[str] = []
+    lines.append("--- Retrieval Info ---")
+    if ce_used:
+        lines.append("Strategy: hybrid + Cross-Encoder reranking")
+    elif fts_results:
+        lines.append("Strategy: hybrid (vector + FTS + RRF fusion)")
+    else:
+        lines.append("Strategy: vector-only")
+    lines.append(
+        f"Sources:  {len(vec_results)} vector + {len(fts_results)} FTS"
+        if fts_results else f"Sources:  {len(vec_results)} vector results"
+    )
+    lines.append("")
     for i, row in enumerate(results, 1):
         lines.append(f"--- Result {i} ---")
         lines.append(f"Title:    {row.get('bug_title', '(untitled)')}")

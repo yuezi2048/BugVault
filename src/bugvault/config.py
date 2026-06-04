@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # ── Full-Text Search (Tantivy) ───────────────────────────────────
     enable_fts: bool = True  # vector + FTS dual recall with RRF fusion
 
+    # ── Cross-Encoder Reranker ─────────────────────────────────────
+    enable_reranker: bool = True  # False → pure RRF, no cross-encoder
+    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # 80MB, fast, English
+
     # ── Claim-Level Eval Circuit Breaker ────────────────────────────
     max_claim_evals_per_session: int = 10  # session-wide cap for claim_level
 

@@ -89,7 +89,7 @@ class LanceDBClient:
         self,
         query_text: str,
         filter_clause: str | None = None,
-        limit: int = 10,
+        limit: int | None = None,
     ) -> list[dict]:
         """Full-text search via Tantivy BM25.
 
@@ -103,7 +103,7 @@ class LanceDBClient:
                 query = self._table.search(query_text)  # type: ignore[union-attr]
                 if filter_clause:
                     query = query.where(filter_clause)
-                return query.limit(limit).to_list()
+                return query.limit(limit or settings.top_k * 4).to_list()
         except Exception:
             logger.exception("FTS search failed (fallback to vector-only)")
             return []
@@ -114,15 +114,14 @@ class LanceDBClient:
         self,
         embedding: list[float],
         filter_clause: str | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
         """Perform ANN search with a pre-computed *embedding*.
 
         Args:
             embedding: The query vector.
-            filter_clause: Optional SQL filter applied *before* ANN search
-                (e.g. ``"LOWER(tech_stack) LIKE '%python%'"``).  Uses
-                LanceDB's native ``.where()`` — see DataFusion docs for
-                supported syntax.
+            filter_clause: Optional SQL filter applied *before* ANN search.
+            limit: Max results (default ``settings.top_k``).
 
         Returns raw rows from LanceDB (list of dicts).
         """
@@ -132,7 +131,7 @@ class LanceDBClient:
             query = self._table.search(embedding)
             if filter_clause:
                 query = query.where(filter_clause)
-            return query.limit(settings.top_k).to_list()  # type: ignore[union-attr]
+            return query.limit(limit or settings.top_k).to_list()  # type: ignore[union-attr]
 
     def upsert_record(
         self,

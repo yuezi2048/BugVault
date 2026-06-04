@@ -440,3 +440,74 @@ class TestMetadataFilter:
         assert "LOWER(project_name)" in clause
         # The injection tokens ';' and quotes are gone from the sanitised values
         assert "';'" not in clause
+
+
+# ===================================================================
+#  RRF Fusion
+# ===================================================================
+
+class TestRRFFusion:
+    """Test Reciprocal Rank Fusion logic."""
+
+    def test_rrf_both_empty(self):
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        result = rrf_fusion([], [])
+        assert result == []
+
+    def test_rrf_vector_only(self):
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        vec = [{"record_id": "a", "bug_title": "A"}, {"record_id": "b", "bug_title": "B"}]
+        result = rrf_fusion(vec, [])
+        assert len(result) == 2
+        assert result[0]["record_id"] == "a"
+        assert result[1]["record_id"] == "b"
+        assert "_rrf_score" in result[0]
+
+    def test_rrf_fts_only(self):
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        fts = [{"record_id": "x", "bug_title": "X"}]
+        result = rrf_fusion([], fts)
+        assert len(result) == 1
+        assert result[0]["record_id"] == "x"
+
+    def test_rrf_ranks_common_doc_higher(self):
+        """A document appearing in both lists gets a higher RRF score."""
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        vec = [
+            {"record_id": "a", "bug_title": "A"},
+            {"record_id": "b", "bug_title": "B"},
+        ]
+        fts = [
+            {"record_id": "b", "bug_title": "B"},  # B in both — should rank first
+            {"record_id": "c", "bug_title": "C"},
+        ]
+        result = rrf_fusion(vec, fts)
+        assert len(result) == 3
+        # Document B appears in both lists → highest RRF score → rank 1
+        assert result[0]["record_id"] == "b"
+        assert result[0]["_rrf_score"] > result[1]["_rrf_score"]
+
+    def test_rrf_k_parameter(self):
+        """Larger k flattens score differences."""
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        vec = [{"record_id": "a"}, {"record_id": "b"}]
+        fts = [{"record_id": "b"}, {"record_id": "c"}]
+
+        result_k1 = rrf_fusion(vec, fts, k=1)
+        result_k100 = rrf_fusion(vec, fts, k=100)
+
+        # Different k should produce different scores
+        assert result_k1[0]["_rrf_score"] != result_k100[0]["_rrf_score"]
+
+    def test_rrf_dedup(self):
+        """Duplicate record_ids are not returned twice."""
+        from bugvault.services.retrieval_svc import rrf_fusion
+
+        vec = [{"record_id": "a"}, {"record_id": "a"}]  # same doc twice
+        result = rrf_fusion(vec, [])
+        assert len(result) == 1

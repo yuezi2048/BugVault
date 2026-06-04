@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     eval_llm_base_url: str = ""  # defaults to OpenAI
     eval_top_k: int = 3  # evaluate top N retrieved records
 
+    # ── Full-Text Search (Tantivy) ───────────────────────────────────
+    enable_fts: bool = True  # vector + FTS dual recall with RRF fusion
+
     # ── Claim-Level Eval Circuit Breaker ────────────────────────────
     max_claim_evals_per_session: int = 10  # session-wide cap for claim_level
 

@@ -67,6 +67,47 @@ class LanceDBClient:
     def is_ready(self) -> bool:
         return self._table is not None
 
+    # ── FTS (Full-Text Search) ─────────────────────────────────────
+
+    def create_fts_index(self, replace: bool = True) -> None:
+        """Create (or replace) the Tantivy FTS index on the ``search_text`` column.
+
+        Must be called after records are inserted so the index is
+        populated.  Called automatically from ``initialize()`` and
+        after ``import_from_archive()`` bulk loads.
+        """
+        if not self.is_ready:
+            logger.warning("Table not ready — skipping FTS index creation")
+            return
+        try:
+            self._table.create_fts_index("search_text", replace=replace)  # type: ignore[union-attr]
+            logger.info("FTS index created/replaced on search_text")
+        except Exception:
+            logger.exception("FTS index creation failed (non-fatal, vector search still works)")
+
+    def search_fts(
+        self,
+        query_text: str,
+        filter_clause: str | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Full-text search via Tantivy BM25.
+
+        Each result row includes a ``_score`` field (BM25 relevance).
+        Returns empty list on failure (FTS index missing, engine error).
+        """
+        if not self.is_ready:
+            raise RuntimeError("BugVault is still initialising")
+        try:
+            with self._lock:
+                query = self._table.search(query_text)  # type: ignore[union-attr]
+                if filter_clause:
+                    query = query.where(filter_clause)
+                return query.limit(limit).to_list()
+        except Exception:
+            logger.exception("FTS search failed (fallback to vector-only)")
+            return []
+
     # ── Public API ──────────────────────────────────────────────────
 
     def search(
@@ -160,3 +201,7 @@ class LanceDBClient:
             ])
             self._table = self._db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
             logger.info("Created new table: %s", self.TABLE_NAME)
+
+        # Always attempt FTS index creation — lightweight if already exists
+        if settings.enable_fts:
+            self.create_fts_index(replace=True)

@@ -24,7 +24,7 @@ from bugvault.config import settings
 from bugvault.models.bug_record import BugRecord
 from bugvault.services.archive_svc import write_markdown_archive
 from bugvault.services.ingestion_svc import validate_and_prepare
-from bugvault.services.retrieval_svc import rerank
+from bugvault.services.retrieval_svc import rerank, rrf_fusion
 from bugvault.utils.logger import logger
 
 # Lazy imports (to avoid circular deps at module level):
@@ -464,9 +464,32 @@ def _sync_search_and_format(
         from bugvault.services.embedding_svc import EmbeddingService
         embedding_svc = EmbeddingService()
 
-    query_emb = embedding_svc.generate_embedding(query)
     filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
-    results = db.search(query_emb, filter_clause=filter_clause)
+    query_emb = embedding_svc.generate_embedding(query)
+    vec_results = db.search(query_emb, filter_clause=filter_clause)
+
+    # ── FTS search (optional, with graceful fallback) ──────────────
+    fts_results: list[dict] = []
+    if settings.enable_fts:
+        try:
+            fts_results = db.search_fts(
+                query, filter_clause=filter_clause,
+                limit=settings.top_k * 2,
+            )
+            # Drop BM25 zero-score results
+            fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
+        except Exception:
+            logger.warning("FTS search failed, falling back to vector-only")
+
+    # ── RRF fusion ─────────────────────────────────────────────────
+    if fts_results:
+        logger.info(
+            "Retrieve: vec=%d fts=%d — fusing via RRF(k=60)",
+            len(vec_results), len(fts_results),
+        )
+        results = rrf_fusion(vec_results, fts_results)
+    else:
+        results = vec_results
 
     if not results:
         logger.info("Retrieve: no results for query '%s'", query[:80])
@@ -476,17 +499,17 @@ def _sync_search_and_format(
         )]
 
     logger.info(
-        "Retrieve: %d raw ANN results for query '%s'",
+        "Retrieve: %d raw results for query '%s'",
         len(results), query[:80],
     )
 
-    # ── hybrid rerank (semantic × recency) ─────────────────────────
+    # ── rerank (semantic threshold / RRF score + time decay) ───────
     pre_count = len(results)
     results = rerank(results, None)
     after_count = len(results)
     if after_count < pre_count:
         logger.info(
-            "Retrieve: threshold filter dropped %d docs (%d → %d)",
+            "Retrieve: rerank dropped %d docs (%d → %d)",
             pre_count - after_count, pre_count, after_count,
         )
 

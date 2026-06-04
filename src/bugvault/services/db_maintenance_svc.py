@@ -100,10 +100,24 @@ def import_from_archive(
         "Inserting %d records into LanceDB in a single batch …",
         len(batch_data),
     )
+    # ── Dedup by record_id before batch insert ─────────────────
+    # merge_insert fails if multiple source rows match the same target
+    seen_rid: set[str] = set()
+    deduped_batch: list[dict] = []
+    for row in batch_data:
+        rid = row.get("record_id", "")
+        if rid in seen_rid:
+            continue
+        seen_rid.add(rid)
+        deduped_batch.append(row)
+
     client._table.merge_insert("record_id") \
         .when_matched_update_all() \
         .when_not_matched_insert_all() \
-        .execute(batch_data)  # type: ignore[arg-type]
+        .execute(deduped_batch)  # type: ignore[arg-type]
+
+    # ── Rebuild FTS index after bulk load ───────────────────────
+    client.create_fts_index(replace=True)
 
     elapsed = time.perf_counter() - t0
     logger.info(

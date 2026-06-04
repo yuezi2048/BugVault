@@ -549,7 +549,16 @@ class RAGEvaluator:
         query: str,
         context: str,
     ) -> RAGEvalResult:
-        """Run claim_level eval or fall back to simple if budget exhausted."""
+        """Run claim_level eval with dual fallback: quota → exception → simple.
+
+        1st fallback — quota exhaustion: ``max_claim_evals_per_session``
+           exceeded → downgrade to simple.
+        2nd fallback — exception: any error from the claim-level LLM
+           call (JSON parse error, timeout, API failure) → catch,
+           log warning, downgrade to simple.  The caller never sees
+           an exception.
+        """
+        # ── 1st fallback: quota exhaustion ─────────────────────────
         if RAGEvaluator._claim_counter >= settings.max_claim_evals_per_session:
             logger.warning(
                 "Claim-level eval budget (%d) exhausted, falling back to simple",
@@ -560,7 +569,19 @@ class RAGEvaluator:
             return result
 
         RAGEvaluator._claim_counter += 1
-        return await self._get_claim().evaluate(query, context)
+
+        # ── 2nd fallback: exception → downgrade to simple ──────────
+        try:
+            return await self._get_claim().evaluate(query, context)
+        except Exception as exc:
+            logger.warning(
+                "Claim-level evaluation failed (%s: %s). "
+                "Falling back to simple strategy.",
+                type(exc).__name__, exc,
+            )
+            result = await self._get_simple().evaluate(query, context)
+            result.strategy_used = "simple (fallback_from_error)"
+            return result
 
     # ── Lazy strategy constructors ──────────────────────────────────
 

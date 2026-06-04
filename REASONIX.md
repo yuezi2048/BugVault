@@ -18,7 +18,7 @@
     `rag_evaluator_svc`, `reflection_svc`, `retrieval_svc`.
   - `utils/` — `logger`, `stdout_guard`, `text_utils`.
 - `tests/` — pytest test files (colocated under `tests/`, not alongside source).
-- `doc/` — design docs and architecture notes (Chinese).
+- `docs/refer/` — design docs and architecture notes (Chinese).
 - `reasonix.toml` — Reasonix assistant configuration.
 
 ## Commands

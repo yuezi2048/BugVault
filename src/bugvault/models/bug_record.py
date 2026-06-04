@@ -113,9 +113,93 @@ class BugRecord(BaseModel):
                 missing.append(field)
         return missing
 
+    def to_chunks(self) -> list[dict]:
+        """Split this bug record into searchable chunks (small-to-big RAG).
+
+        Returns a list of dicts ready for ``bugvault_chunks`` table::
+
+            [
+                {"chunk_id": "<md5>_err", "parent_id": "<record_id>",
+                 "chunk_type": "error", "search_text": "...",
+                 "tech_stack": "...", "project_name": "..."},
+                {"chunk_id": "<md5>_sol", "parent_id": "<record_id>",
+                 "chunk_type": "solution", "search_text": "...",
+                 "tech_stack": "...", "project_name": "..."},
+            ]
+        """
+        import hashlib
+        rid = self.record_id or hashlib.md5(self.bug_title.encode()).hexdigest()
+
+        chunks: list[dict] = [
+            {
+                "chunk_id": f"{rid}_err",
+                "parent_id": rid,
+                "chunk_type": "error",
+                "search_text": f"{self.bug_title}\n{self.error_log_snippet}",
+                "tech_stack": self.tech_stack or "",
+                "project_name": self.project_name or "",
+            },
+            {
+                "chunk_id": f"{rid}_sol",
+                "parent_id": rid,
+                "chunk_type": "solution",
+                "search_text": (
+                    f"{self.bug_title}\n{self.tried_methods}\n{self.final_solution}"
+                    + (f"\n{self.root_cause}" if self.root_cause else "")
+                ),
+                "tech_stack": self.tech_stack or "",
+                "project_name": self.project_name or "",
+            },
+        ]
+        return chunks
+
     def to_search_text(self) -> str:
         """Concatenate key fields into a single blob for embedding."""
         parts = [self.bug_title, self.error_log_snippet, self.tried_methods, self.final_solution]
         if self.root_cause:
             parts.append(self.root_cause)
         return "\n".join(parts)
+
+    def to_chunks(self) -> list[dict]:
+        """Generate two focused text chunks for parent-child vector retrieval.
+
+        Chunk A (``error_log`` type):
+            ``bug_title + "\\n" + error_log_snippet``
+            → for exact-error matching.
+
+        Chunk B (``semantic`` type):
+            ``bug_title + "\\n" + tried_methods + "\\n" + final_solution``
+            → for semantic-similarity matching (same-class problems).
+
+        Returns a list of dicts, each with:
+            chunk_id, parent_id (self.record_id), chunk_type, search_text.
+        """
+        import hashlib
+
+        chunks: list[dict] = []
+
+        # ── Chunk A: error_log ──────────────────────────────────────
+        error_text = f"{self.bug_title}\n{self.error_log_snippet}"
+        error_chunk_id = hashlib.md5(
+            f"{self.record_id}_error_log".encode()
+        ).hexdigest()
+        chunks.append({
+            "chunk_id": error_chunk_id,
+            "parent_id": self.record_id or "",
+            "chunk_type": "error_log",
+            "search_text": error_text,
+        })
+
+        # ── Chunk B: semantic ───────────────────────────────────────
+        semantic_text = f"{self.bug_title}\n{self.tried_methods}\n{self.final_solution}"
+        semantic_chunk_id = hashlib.md5(
+            f"{self.record_id}_semantic".encode()
+        ).hexdigest()
+        chunks.append({
+            "chunk_id": semantic_chunk_id,
+            "parent_id": self.record_id or "",
+            "chunk_type": "semantic",
+            "search_text": semantic_text,
+        })
+
+        return chunks

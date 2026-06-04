@@ -290,7 +290,31 @@ def main() -> None:
 
     print(f"     Embedded {len(batch_data)} records ({time.perf_counter() - t_embed:.1f}s)")
 
-    # ── Batch upsert (in chunks to avoid spill) ──────────────────
+    # ── Generate + embed + upsert chunks (dual-write) ────────────
+    if batch_data and embedding_svc:
+        chunk_rows: list[dict] = []
+        chunk_texts: list[str] = []
+        chunk_record_map: list[tuple[int, int]] = []  # (record_idx, chunk_idx)
+        for ri, p_record in enumerate(records):
+            if p_record is None or p_record[0] is None:
+                continue
+            rec = p_record[0]
+            for ci, ch in enumerate(rec.to_chunks()):
+                chunk_texts.append(ch["search_text"])
+                chunk_record_map.append((ri, len(chunk_rows)))
+                chunk_rows.append(ch)
+
+        if chunk_texts:
+            chunk_embs = list(embedding_svc._model.embed(chunk_texts, batch_size=64))
+            for idx, emb_vec in enumerate(chunk_embs):
+                chunk_rows[idx]["vector"] = emb_vec
+
+            client.ensure_chunks_table()
+            client.upsert_chunks(chunk_rows)
+            client.create_chunks_fts_index()
+            print(f"  🧩 Wrote {len(chunk_rows)} chunks to bugvault_chunks")
+
+    # ── Batch upsert parents (in chunks to avoid spill) ──────────
     if batch_data:
         CHUNK = 200
         total = len(batch_data)

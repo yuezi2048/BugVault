@@ -322,7 +322,7 @@ def main() -> None:
     print(f"  ✅ Import complete")
     print(f"     Total input:  {len(rows)}")
     print(f"     Imported:     {len(batch_data)}")
-    print(f"     Failed:       {failed}")
+    print(f"     Skipped:      {len(rows) - len(batch_data)} (no title / no accepted answer)")
     print(f"     Time:         {t_elapsed:.1f}s")
     print(f"  {'─' * 56}")
 

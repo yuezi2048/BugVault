@@ -105,6 +105,8 @@ def main() -> None:
                         help="Optional: only import rows where tags contain this string (case-insensitive)")
     parser.add_argument("--limit", type=int, default=0,
                         help="Max records to import (0 = all)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Parallel workers for embedding (default: 1, ONNX CPU)")
 
     # Self-join mode (for Stack Overflow posts table where answers are same table)
     parser.add_argument("--join-solution", action="store_true",
@@ -192,11 +194,21 @@ def main() -> None:
             solution_col=args.map_solution,
         )
         print(f"     Joined {len(joined)} questions with accepted answers")
-        # Replace solution field in each row
+        # Mark all question-type rows as INVALID, then mark joined ones as valid
+        for idx, row in enumerate(rows):
+            pt = row.get(args.col_post_type)
+            if isinstance(pt, str):
+                try:
+                    pt = int(pt)
+                except (ValueError, TypeError):
+                    pt = -1
+            if pt == args.post_type_question:
+                row['_valid'] = False
         for idx_from, solution_text in joined:
             rows[idx_from][args.map_solution] = solution_text
-        # Remove rows that still have no solution
-        rows = [r for r in rows if r.get(args.map_solution)]
+            rows[idx_from]['_valid'] = True
+        # Remove invalid rows (questions without answers; non-question rows)
+        rows = [r for r in rows if r.get('_valid', True)]
         print(f"     After removing unanswered: {len(rows)} records")
 
     # ── Apply filters ─────────────────────────────────────────────
@@ -230,11 +242,14 @@ def main() -> None:
             continue
         records.append((record, record.to_search_text()))
 
-    # Second pass: batch inference via fastembed native batch
+    # Second pass: parallel batch inference via fastembed
     texts = [r[1] for r in records if r is not None]
     if texts:
-        embeddings_iter = embedding_svc._model.embed(texts, batch_size=BATCH_SIZE)
-        embeddings = list(embeddings_iter)  # type: ignore[arg-type]
+        if args.workers > 1:
+            embeddings = _parallel_embed(embedding_svc, texts, args.workers)
+        else:
+            embeddings_iter = embedding_svc._model.embed(texts, batch_size=BATCH_SIZE)
+            embeddings = list(embeddings_iter)  # type: ignore[arg-type]
     else:
         embeddings = []
 
@@ -275,13 +290,18 @@ def main() -> None:
 
     print(f"     Embedded {len(batch_data)} records ({time.perf_counter() - t_embed:.1f}s)")
 
-    # ── Batch upsert ──────────────────────────────────────────────
+    # ── Batch upsert (in chunks to avoid spill) ──────────────────
     if batch_data:
-        print(f"  💾 Inserting {len(batch_data)} records into LanceDB …")
-        client._table.merge_insert("record_id") \
-            .when_matched_update_all() \
-            .when_not_matched_insert_all() \
-            .execute(batch_data)  # type: ignore[arg-type]
+        CHUNK = 200
+        total = len(batch_data)
+        print(f"  💾 Inserting {total} records into LanceDB (chunk={CHUNK}) …")
+        for start in range(0, total, CHUNK):
+            chunk = batch_data[start:start + CHUNK]
+            client._table.merge_insert("record_id") \
+                .when_matched_update_all() \
+                .when_not_matched_insert_all() \
+                .execute(chunk)  # type: ignore[arg-type]
+            print(f"     Inserted {min(start + CHUNK, total)}/{total}")
 
         # Rebuild FTS index
         client.create_fts_index(replace=True)
@@ -483,6 +503,39 @@ def extract_so_fields(item: dict) -> dict:
         "tech_stack": str(item.get("tags", ""))[:256],
         "create_time": item.get("creation_date", ""),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Parallel embedding
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _parallel_embed(
+    embedding_svc: EmbeddingService,
+    texts: list[str],
+    workers: int,
+) -> list[list[float]]:
+    """Split texts into chunks and embed in parallel via ONNX model.
+
+    ONNX Runtime releases the GIL during inference, so
+    ``ThreadPoolExecutor`` provides actual parallelism here.
+    """
+    import concurrent.futures
+
+    chunk_size = max(1, len(texts) // workers)
+    chunks = [texts[i:i + chunk_size] for i in range(0, len(texts), chunk_size)]
+    BATCH_SIZE = 64
+
+    def _embed_chunk(chunk: list[str]) -> list[list[float]]:
+        return list(embedding_svc._model.embed(chunk, batch_size=BATCH_SIZE))  # type: ignore
+
+    results: list[list[float]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_embed_chunk, c) for c in chunks]
+        for f in concurrent.futures.as_completed(futures):
+            results.extend(f.result())
+
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════

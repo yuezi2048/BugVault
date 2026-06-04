@@ -265,6 +265,76 @@ def _compute_record_id(self) -> "BugRecord":
 
 > Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
+---
+
+## 数据模型
+
+### 🐞 `BugRecord` — 保存/检索的排障记录
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `bug_title` | `str` (1-256) | ✅ | 短标题 |
+| `error_log_snippet` | `str` (1-32768) | ✅ | 错误消息或堆栈 |
+| `tried_methods` | `str` (1-8192) | ✅ | 已尝试的方法 |
+| `final_solution` | `str` (1-16384) | ✅ | 最终修复方案 |
+| `project_name` | `str \| None` | ❌ | 项目名称 |
+| `tech_stack` | `str \| None` | ❌ | 技术栈标签（如 "Python 3.13, Django"） |
+| `root_cause` | `str \| None` | ❌ | 根因分析（≤4096 字符） |
+| `record_id` | `str \| None` | 🛠️ 自动 | MD5(`bug_title` + `error_log_snippet`) — 去重键 |
+| `create_time` | `str` | 🛠️ 自动 | ISO-8601 UTC 时间戳 |
+
+### 📊 `RAGEvalResult` — 评估输出（所有字段可选）
+
+| 字段 | 类型 | 范围 | 说明 |
+|------|------|------|------|
+| `strategy_used` | `str` | `simple` / `claim_level` / `simple (fallback_from_error)` | 实际执行的评估策略 |
+| `rag_confidence_score` | `float \| None` | 0-10 | 综合：`faithfulness×5 + context_relevance` |
+| `context_relevance` | `float \| None` | 0.0-5.0 | 检索文档对查询的相关程度 |
+| `faithfulness` | `float \| None` | 0.0-5.0 (simple) / 0.0-1.0 (claim_level) | 被源文档支持的声明比率 |
+| `evaluation` | `str \| None` | — | `justification` 的别名 |
+| `justification` | `str \| None` | — | 扣分理由的严苛解释 |
+| `claims_analysis` | `list[dict] \| None` | — | Claim 级：`[{claim, supported, reason}]` |
+| `suggested_action` | `str \| None` | `CONFIDENT` / `PARTIAL` / `CAUTION` / `INSUFFICIENT` | 给 Agent 的结构化建议 |
+| `prompt_tokens` | `int \| None` | — | 送往裁判 LLM 的 prompt token 数 |
+| `completion_tokens` | `int \| None` | — | 裁判 LLM 返回的 completion token 数 |
+| `total_tokens` | `int \| None` | — | 评估消耗的总 token 数 |
+
+### 🛠️ 工具：`retrieve_bug_experience` — 请求参数
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `query` | `string` | ✅ | — | 错误消息、堆栈或 bug 描述 |
+| `eval_depth` | `enum` | ❌ | `"simple"` | `"none"` / `"simple"` / `"claim_level"` |
+| `target_tech_stack` | `string` | ❌ | — | 技术栈过滤（如 `"Python"`），大小写不敏感 |
+| `target_project_name` | `string` | ❌ | — | 项目名过滤（如 `"order-svc"`），大小写不敏感 |
+
+**返回值：** 格式化的文本块，包含：
+1. `--- Retrieval Info ---` — 使用策略（hybrid / vector-only）+ 来源统计
+2. `--- Result N ---` — 每条检索到的排障记录（标题、项目、错误、尝试、方案、根因）
+3. `--- RAG Evaluation ---` — 置信度分数、Token 用量、声明分析（当 `eval_depth != "none"` 时）
+
+### 💾 工具：`save_bug_experience` — 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `bug_title` | `string` | ✅ | 短标题 |
+| `error_log_snippet` | `string` | ✅ | 错误消息或堆栈 |
+| `tried_methods` | `string` | ✅ | 已尝试的方法 |
+| `final_solution` | `string` | ✅ | 最终修复方案 |
+| `project_name` | `string` | ❌ | 项目名称（可选） |
+| `tech_stack` | `string` | ❌ | 技术栈标签（可选） |
+| `root_cause` | `string` | ❌ | 根因分析（可选） |
+
+### 📝 工具：`reflect_and_prevent_error` — 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `reflection_text` | `string` | ✅ | Bug 原因详细分析 |
+| `error_category` | `enum` | ✅ | `understanding_bias` / `code_logic_error` / `api_misuse` / `environment_issue` / `other` |
+| `preventive_rule` | `string` | ✅ | 防止复发的可执行规则 |
+
+---
+
 ### 关键配置
 
 | 变量 | 默认值 | 说明 |

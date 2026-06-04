@@ -255,6 +255,76 @@ def _compute_record_id(self) -> "BugRecord":
 
 > **設定場所：** Claude Code: `~/.claude/settings.json` | Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
+---
+
+## データモデル
+
+### 🐞 `BugRecord` — 保存/検索されたバグ記録
+
+| フィールド | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `bug_title` | `str` (1-256) | ✅ | 短いタイトル |
+| `error_log_snippet` | `str` (1-32768) | ✅ | エラーメッセージまたはスタックトレース |
+| `tried_methods` | `str` (1-8192) | ✅ | 試行済みの方法 |
+| `final_solution` | `str` (1-16384) | ✅ | 最終的な修正 |
+| `project_name` | `str \| None` | ❌ | プロジェクト名 |
+| `tech_stack` | `str \| None` | ❌ | 技術スタックタグ（例："Python 3.13, Django"） |
+| `root_cause` | `str \| None` | ❌ | 根本原因分析（≤4096 文字） |
+| `record_id` | `str \| None` | 🛠️ 自動 | MD5(`bug_title` + `error_log_snippet`) — 重複排除キー |
+| `create_time` | `str` | 🛠️ 自動 | ISO-8601 UTC タイムスタンプ |
+
+### 📊 `RAGEvalResult` — 評価出力（全フィールド任意）
+
+| フィールド | 型 | 範囲 | 説明 |
+|-----------|-----|------|------|
+| `strategy_used` | `str` | `simple` / `claim_level` / `simple (fallback_from_error)` | 実際に実行された戦略 |
+| `rag_confidence_score` | `float \| None` | 0-10 | 合成スコア：`faithfulness×5 + context_relevance` |
+| `context_relevance` | `float \| None` | 0.0-5.0 | 検索文書のクエリ関連性 |
+| `faithfulness` | `float \| None` | 0.0-5.0 (simple) / 0.0-1.0 (claim_level) | ソース文書に裏付けられた主張の割合 |
+| `evaluation` | `str \| None` | — | `justification` の別名 |
+| `justification` | `str \| None` | — | 減点理由の厳しい説明 |
+| `claims_analysis` | `list[dict] \| None` | — | 主張レベル：`[{claim, supported, reason}]` |
+| `suggested_action` | `str \| None` | `CONFIDENT` / `PARTIAL` / `CAUTION` / `INSUFFICIENT` | Agent への構造化提案 |
+| `prompt_tokens` | `int \| None` | — | 判定 LLM に送信された prompt token 数 |
+| `completion_tokens` | `int \| None` | — | 判定 LLM からの completion token 数 |
+| `total_tokens` | `int \| None` | — | 評価で消費された総 token 数 |
+
+### 🛠️ ツール：`retrieve_bug_experience` — リクエストパラメータ
+
+| パラメータ | 型 | 必須 | デフォルト | 説明 |
+|-----------|-----|------|-----------|------|
+| `query` | `string` | ✅ | — | エラーメッセージ、スタックトレース、バグの説明 |
+| `eval_depth` | `enum` | ❌ | `"simple"` | `"none"` / `"simple"` / `"claim_level"` |
+| `target_tech_stack` | `string` | ❌ | — | 技術スタックフィルター（例：`"Python"`）、大文字小文字を区別しない |
+| `target_project_name` | `string` | ❌ | — | プロジェクト名フィルター（例：`"order-svc"`）、大文字小文字を区別しない |
+
+**戻り値：** フォーマットされたテキストブロック：
+1. `--- Retrieval Info ---` — 使用戦略（hybrid / vector-only）+ ソース数
+2. `--- Result N ---` — 取得された各バグ記録（タイトル、プロジェクト、エラー、試行、解決策、根本原因）
+3. `--- RAG Evaluation ---` — 信頼度スコア、トークン使用量、主張分析（`eval_depth != "none"` の場合）
+
+### 💾 ツール：`save_bug_experience` — リクエストパラメータ
+
+| パラメータ | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `bug_title` | `string` | ✅ | 短いタイトル |
+| `error_log_snippet` | `string` | ✅ | エラーメッセージまたはスタックトレース |
+| `tried_methods` | `string` | ✅ | 試行済みの方法 |
+| `final_solution` | `string` | ✅ | 最終的な修正 |
+| `project_name` | `string` | ❌ | プロジェクト名（任意） |
+| `tech_stack` | `string` | ❌ | 技術スタックタグ（任意） |
+| `root_cause` | `string` | ❌ | 根本原因分析（任意） |
+
+### 📝 ツール：`reflect_and_prevent_error` — リクエストパラメータ
+
+| パラメータ | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `reflection_text` | `string` | ✅ | バグ原因の詳細分析 |
+| `error_category` | `enum` | ✅ | `understanding_bias` / `code_logic_error` / `api_misuse` / `environment_issue` / `other` |
+| `preventive_rule` | `string` | ✅ | 再発防止のための実行可能なルール |
+
+---
+
 ### キー設定
 
 | 変数 | デフォルト値 | 説明 |

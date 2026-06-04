@@ -25,6 +25,29 @@ from bugvault.models.bug_record import BugRecord
 from bugvault.utils.logger import logger
 
 
+def _verify_vector_dim(table, expected_dim: int, table_name: str) -> None:
+    """Check that *table*'s vector dimension matches *expected_dim*.
+
+    Raises ``ValueError`` on mismatch, which crashes early rather than
+    producing silent garbage or cryptic LanceDB errors on insert.
+    """
+    schema = table.schema
+    vec_field = [f for f in schema if "vector" in f.name.lower()]
+    if not vec_field:
+        return
+    field_type = str(vec_field[0].type)
+    import re
+    m = re.search(r"\[(\d+)\]", field_type)
+    if m:
+        actual_dim = int(m.group(1))
+        if actual_dim != expected_dim:
+            raise ValueError(
+                f"Vector dimension mismatch for '{table_name}': "
+                f"table has {actual_dim}, config has {expected_dim}. "
+                f"Set BUGVAULT_EMBEDDING_DIM={actual_dim} or re-import."
+            )
+
+
 class LanceDBClient:
     """OOP wrapper around LanceDB.
 
@@ -81,66 +104,6 @@ class LanceDBClient:
     def is_ready(self) -> bool:
         return self._table is not None and self._chunks_table is not None
 
-    # ── Chunks table (small-to-big RAG) ────────────────────────────
-
-    @property
-    def chunks_ready(self) -> bool:
-        return self._chunks_table is not None
-
-    def search_chunks(
-        self,
-        embedding: list[float],
-        filter_clause: str | None = None,
-        limit: int | None = None,
-    ) -> list[dict]:
-        """ANN search on ``bugvault_chunks`` (primary retrieval path)."""
-        if not self.chunks_ready:
-            return []
-        with self._lock:
-            query = self._chunks_table.search(embedding)
-            if filter_clause:
-                query = query.where(filter_clause)
-            return query.limit(limit or settings.top_k * 4).to_list()  # type: ignore[union-attr]
-
-    def search_chunks_fts(
-        self,
-        query_text: str,
-        filter_clause: str | None = None,
-        limit: int | None = None,
-    ) -> list[dict]:
-        """FTS search on ``bugvault_chunks``."""
-        if not self.chunks_ready:
-            return []
-        try:
-            with self._lock:
-                query = self._chunks_table.search(query_text)
-                if filter_clause:
-                    query = query.where(filter_clause)
-                return query.limit(limit or settings.top_k * 4).to_list()
-        except Exception:
-            logger.exception("Chunks FTS search failed")
-            return []
-
-    def upsert_chunks(self, chunks: list[dict]) -> None:
-        """Batch upsert chunks into ``bugvault_chunks``."""
-        if not self.chunks_ready:
-            return
-        with self._lock:
-            self._chunks_table.merge_insert("chunk_id") \
-                .when_matched_update_all() \
-                .when_not_matched_insert_all() \
-                .execute(chunks)  # type: ignore[arg-type]
-
-    def create_chunks_fts_index(self, replace: bool = True) -> None:
-        """Build/replace FTS index on ``bugvault_chunks.search_text``."""
-        if not self.chunks_ready:
-            return
-        try:
-            self._chunks_table.create_fts_index("search_text", replace=replace)  # type: ignore[union-attr]
-            logger.info("FTS index on bugvault_chunks.search_text ready")
-        except Exception:
-            logger.exception("Chunks FTS index creation failed (non-fatal)")
-
     # ── FTS (Full-Text Search) — parent table ──────────────────────
 
     def create_fts_index(self, replace: bool = True) -> None:
@@ -181,41 +144,6 @@ class LanceDBClient:
             logger.exception("FTS search on bug_records failed (fallback to vector-only)")
             return []
 
-    # ── FTS — chunks table ──────────────────────────────────────────
-
-    def create_chunks_fts_index(self, replace: bool = True) -> None:
-        """Create (or replace) the Tantivy FTS index on ``bugvault_chunks.search_text``."""
-        if self._chunks_table is None:
-            logger.warning("chunks table not ready — skipping FTS index creation")
-            return
-        try:
-            self._chunks_table.create_fts_index("search_text", replace=replace)  # type: ignore[union-attr]
-            logger.info("FTS index created/replaced on bugvault_chunks.search_text")
-        except Exception:
-            logger.exception("Chunks FTS index creation failed (non-fatal, vector search still works)")
-
-    def search_chunks_fts(
-        self,
-        query_text: str,
-        filter_clause: str | None = None,
-        limit: int | None = None,
-    ) -> list[dict]:
-        """Full-text search on ``bugvault_chunks`` via Tantivy BM25.
-
-        Each result row includes a ``_score`` field (BM25 relevance).
-        Returns empty list on failure.
-        """
-        if self._chunks_table is None:
-            raise RuntimeError("BugVault is still initialising")
-        try:
-            with self._lock:
-                query = self._chunks_table.search(query_text)  # type: ignore[union-attr]
-                if filter_clause:
-                    query = query.where(filter_clause)
-                return query.limit(limit or settings.top_k * 4).to_list()
-        except Exception:
-            logger.exception("FTS search on chunks failed (fallback to vector-only)")
-            return []
 
     # ── Public API: parent table (bug_records) ──────────────────────
 
@@ -364,6 +292,7 @@ class LanceDBClient:
         existing_names: list[str] = existing.tables
         if self.TABLE_NAME in existing_names:
             self._table = self._db.open_table(self.TABLE_NAME)
+            _verify_vector_dim(self._table, settings.embedding_dim, self.TABLE_NAME)
             logger.info("Opened existing table: %s", self.TABLE_NAME)
         else:
             schema = pa.schema([
@@ -392,6 +321,7 @@ class LanceDBClient:
         existing_names: list[str] = existing.tables
         if self.CHUNKS_TABLE_NAME in existing_names:
             self._chunks_table = self._db.open_table(self.CHUNKS_TABLE_NAME)
+            _verify_vector_dim(self._chunks_table, settings.embedding_dim, self.CHUNKS_TABLE_NAME)
             logger.info("Opened existing table: %s", self.CHUNKS_TABLE_NAME)
         else:
             schema = pa.schema([

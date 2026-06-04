@@ -525,9 +525,11 @@ def _sync_search_and_format(
     ce_used = False
 
     if not chunk_results:
-        # ── Fallback: search parent bug_records directly ──────────
-        logger.info("Chunks returned empty — falling back to bug_records search")
-        vec_results = db.search(query_emb, filter_clause=filter_clause, limit=rerank_limit)
+        # ── Fallback: search parent bug_records via FTS only ────
+        # Vector search disabled because all parent vectors are [0.0]*dim
+        # (zero-vector optimization — they're never used for ANN)
+        logger.info("Chunks empty — fallback to bug_records FTS search")
+        vec_results = []
         if settings.enable_fts:
             try:
                 fts_results = db.search_fts(

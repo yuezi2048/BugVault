@@ -58,7 +58,7 @@ class Settings(BaseSettings):
 
     # ── Cross-Encoder Reranker ─────────────────────────────────────
     enable_reranker: bool = True  # False → pure RRF, no cross-encoder
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # 80MB, fast, English
+    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"  # 1.1GB, multilingual
 
     # ── Claim-Level Eval Circuit Breaker ────────────────────────────
     max_claim_evals_per_session: int = 10  # session-wide cap for claim_level

@@ -67,6 +67,16 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
   (e.g. `"Python"` still matches `"Python 3.13"`) while preventing cross-technology false positives.
   See [test report](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明) for P1 closure proof.
 
+### What's New in v2.0 — Project Convention Memory
+
+- **🏷️ Convention Memory** — Two new MCP tools (`save_convention` / `retrieve_convention`) for storing and querying **project conventions** — architecture rules, business rules, test conventions, and style guides
+- **🧩 Shared Table Architecture** — Conventions share the same `bug_records` and `bugvault_chunks` tables as bugs, distinguished by `record_type='convention'` discriminator
+- **🔄 Same Retrieval Pipeline** — Vector ANN → FTS BM25 → RRF fusion → Cross-Encoder reranking, now filtered by `record_type`
+- **📦 ConventionRecord Model** — 4 mandatory fields: `convention_name`, `trigger_context`, `incorrect_behavior`, `correct_behavior`
+- **🗄️ Auto Schema Migration** — `_migrate_v2_schema_if_needed()` adds the `record_type` column to existing v1.1.x tables at startup (idempotent, non-destructive)
+- **📚 Separate Markdown Archive** — Conventions archived to `~/.bugvault/archive/conventions/`
+- See [v2.0 release notes](docs/v2.0/v2.0.0-release-notes.md) and [convention spec](docs/v2.0/convention-spec.md)
+
 ### What's New in v1.1
 
 - **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md)
@@ -143,6 +153,8 @@ See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md)
 ---
 
 ## Architecture: Two-Agent Collaboration
+
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Decision Agent (Claude)                       │
 │                                                                  │
@@ -190,6 +202,7 @@ See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md)
 ```
 
 
+
 ### Key Principle: Clean Separation
 
 | Layer                       | Responsibility                             | Never Does                   |
@@ -200,7 +213,41 @@ See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md)
 
 ---
 
-## The Three Tools
+## The Five Tools
+
+### 🏷️ `save_convention` — Project Convention Memory (v2.0)
+
+When a user corrects the AI about a project rule (business rule, architecture
+convention, test convention, style guide), the AI calls this tool immediately
+to persist the rule for future sessions.
+
+**4 mandatory fields:**
+
+| Field | Example |
+|-------|---------|
+| `convention_name` | "API Response Format" |
+| `trigger_context` | "When writing a new REST API endpoint" |
+| `incorrect_behavior` | "Returning raw dict" |
+| `correct_behavior` | "Use `{\"code\": 0, \"data\": ..., \"message\": \"ok\"}` format" |
+
+**Execution:** synchronous Markdown archive → fire-and-forget embedding + LanceDB upsert
+with `record_type='convention'`. Returns confirmation to the AI immediately.
+
+### 🔍 `retrieve_convention` — Proactive Convention Check (v2.0)
+
+Before making code changes, the AI proactively queries this tool to check if
+any project conventions govern the area being modified.
+
+Uses the **same retrieval pipeline** as bug search (vector ANN + FTS BM25 → RRF fusion
+→ Cross-Encoder reranking), filtered to `record_type='convention'`.
+
+```
+retrieve_convention(
+    query="API response format",
+    target_scope="src/api/",
+    target_tags="Python, FastAPI"
+)
+```
 
 ### 🛠️ `retrieve_bug_experience` — Proactive Memory Recall
 
@@ -270,7 +317,8 @@ bugvault/
 ├── pyproject.toml                 # Project config & dependencies
 ├── .env.example                   # Environment variable template
 ├── scripts/
-│   └── rag_evaluation_report.py   # End-to-end RAG evaluation runner
+│   ├── rag_evaluation_report.py   # End-to-end RAG evaluation runner
+│   └── migrate_v2.py              # v1.1.x → v2.0 schema migration
 ├── src/
 │   └── bugvault/
 │       ├── main.py                # MCP entry point (~70 lines)
@@ -287,9 +335,9 @@ bugvault/
 │       │   ├── archive_svc.py     # Markdown archive writer
 │       │   └── reflection_svc.py  # CLAUDE.md prevention rules
 │       ├── database/
-│       │   └── lancedb_client.py  # LanceDB: dual tables (bug_records + bugvault_chunks), merge_insert + Lock + overwrite
+│       │   └── lancedb_client.py  # LanceDB: dual tables + record_type discriminator + auto schema migration (v2.0)
 │       ├── mcp_tools/
-│       │   └── tools.py           # MCP tool registration + dispatch
+│       │   └── tools.py           # MCP tool registration + dispatch (5 tools: bug + convention + reflection)
 │       └── utils/
 │           ├── stdout_guard.py    # MCP stdio transport protection
 │           ├── logger.py          # stderr-only logging
@@ -304,6 +352,8 @@ bugvault/
 ---
 
 ## Data Model
+
+### 🐞 BugRecord — Saved/Retrieved Bug Experience
 
 ```python
 class BugRecord(BaseModel):
@@ -333,6 +383,30 @@ def _compute_record_id(self) -> "BugRecord":
     self.record_id = hashlib.md5(raw).hexdigest()
     return self
 ```
+
+### 🏷️ ConventionRecord — Project Convention Memory (v2.0)
+
+```python
+class ConventionRecord(BaseModel):
+    # ── Mandatory (4 fields) ──
+    convention_name: str         # Short rule name (1-256 chars)
+    trigger_context: str         # When/where this applies
+    incorrect_behavior: str      # What the AI should NOT do
+    correct_behavior: str        # What the AI SHOULD do
+
+    # ── Optional ──
+    scope: str | None            # Scope (e.g. "src/api/")
+    tags: str | None             # Tags (e.g. "Python, FastAPI")
+
+    # ── System-managed ──
+    record_id: str | None        # MD5(convention_name + trigger_context)
+    create_time: str             # ISO-8601
+    record_type: str = "convention"  # Discriminator
+```
+
+Shares the **same database table** as BugRecord via `record_type='convention'` discriminator.
+The same retrieval pipeline (vector ANN + FTS BM25 → RRF fusion → Cross-Encoder reranking)
+applies to both bug experiences and project conventions.
 
 ---
 

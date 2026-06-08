@@ -13,17 +13,17 @@ Tests:
 
 from __future__ import annotations
 
-import json
+import os
 import sys
-import time
+import tempfile
 
-from bugvault.utils.stdout_guard import _MCPStdoutProxy  # noqa: F401
+# Isolate test data from existing sample DB
+_DATA_ROOT = tempfile.mkdtemp(prefix="bugvault_chunk_test_")
+os.environ["BUGVAULT_DATA_ROOT"] = _DATA_ROOT
 
-from bugvault.config import settings
 from bugvault.database.lancedb_client import LanceDBClient
 from bugvault.models.bug_record import BugRecord
 from bugvault.services.embedding_svc import EmbeddingService
-from bugvault.utils.logger import logger
 
 PASS = 0
 FAIL = 0
@@ -282,6 +282,13 @@ def main() -> None:
         except Exception:
             pass
     print("  Cleanup completed")
+
+    # ── Remove temp dir ───────────────────────────────────────────
+    import shutil
+    try:
+        shutil.rmtree(_DATA_ROOT, ignore_errors=True)
+    except Exception:
+        pass
 
     # ── Summary ────────────────────────────────────────────────────
     print()

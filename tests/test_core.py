@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from bugvault.models.bug_record import BugRecord
+from bugvault.models.convention_record import ConventionRecord
 from bugvault.models.reflection_rule import PreventionRule
 from bugvault.models.rag_eval_result import RAGEvalResult
 from bugvault.services.archive_svc import (
@@ -356,3 +357,86 @@ class TestWriteMarkdownArchive:
         content = out.read_text(encoding="utf-8")
         assert "archive test" in content
         assert "oops" in content
+
+
+# ===================================================================
+#  ConventionRecord model — core tests
+# ===================================================================
+
+class TestConventionRecordModel:
+    """ConventionRecord model: validation, dedup, chunking, field mapping."""
+
+    def test_minimal_valid(self):
+        r = ConventionRecord(
+            convention_name="Rule",
+            trigger_context="ctx",
+            incorrect_behavior="bad",
+            correct_behavior="good",
+        )
+        assert r.convention_name == "Rule"
+        assert r.record_type == "convention"
+        assert r.record_id is not None
+
+    def test_all_fields(self):
+        r = ConventionRecord(
+            convention_name="Full Rule",
+            trigger_context="trigger",
+            incorrect_behavior="wrong",
+            correct_behavior="right",
+            scope="src/",
+            tags="Java",
+        )
+        assert r.scope == "src/"
+        assert r.tags == "Java"
+
+    def test_missing_required(self):
+        r = ConventionRecord(
+            convention_name="Test",
+            trigger_context="ctx",
+            incorrect_behavior="  ",
+            correct_behavior="right",
+        )
+        assert "incorrect_behavior" in r.missing_required_fields()
+
+    def test_record_id_dedup(self):
+        args = dict(
+            convention_name="Same",
+            trigger_context="same ctx",
+            incorrect_behavior="bad",
+            correct_behavior="good",
+        )
+        assert ConventionRecord(**args).record_id == ConventionRecord(**args).record_id
+
+    def test_to_table_row(self):
+        r = ConventionRecord(
+            convention_name="Name",
+            trigger_context="ctx",
+            incorrect_behavior="bad",
+            correct_behavior="good",
+        )
+        row = r.to_table_row()
+        assert row["bug_title"] == "Name"
+        assert row["record_type"] == "convention"
+
+    def test_to_chunks(self):
+        r = ConventionRecord(
+            convention_name="ChunkTest",
+            trigger_context="ctx",
+            incorrect_behavior="bad",
+            correct_behavior="good",
+        )
+        chunks = r.to_chunks()
+        assert len(chunks) == 2
+        assert chunks[0]["chunk_type"] == "context"
+        assert chunks[1]["chunk_type"] == "correct_behavior"
+        assert chunks[0]["record_type"] == "convention"
+
+    def test_to_search_text(self):
+        r = ConventionRecord(
+            convention_name="Rule",
+            trigger_context="ctx",
+            incorrect_behavior="bad",
+            correct_behavior="good",
+        )
+        text = r.to_search_text()
+        assert all(x in text for x in ["Rule", "ctx", "bad", "good"])

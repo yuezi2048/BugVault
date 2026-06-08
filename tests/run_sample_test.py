@@ -617,7 +617,20 @@ async def main():
         # Write archive + upsert to LanceDB
         search_text = record.to_search_text()
         embedding = embedding_svc.generate_embedding(search_text)
-        db.upsert_record(search_text, embedding, record)
+        db.upsert_record({
+            "vector": embedding,
+            "record_id": record.record_id or "",
+            "bug_title": record.bug_title,
+            "error_log_snippet": record.error_log_snippet,
+            "tried_methods": record.tried_methods,
+            "final_solution": record.final_solution,
+            "project_name": record.project_name or "",
+            "tech_stack": record.tech_stack or "",
+            "root_cause": record.root_cause or "",
+            "create_time": record.create_time,
+            "search_text": search_text,
+            "record_type": "bug",
+        })
         write_markdown_archive(record)
         success += 1
 

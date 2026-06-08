@@ -71,7 +71,23 @@ class TestAsyncEmbedAndStore:
     async def _simulate_async_store(self, db, emb, record, loop, executor):
         """Simulate _async_embed_and_store's inner _work() synchronously."""
         from bugvault.mcp_tools.tools import _async_embed_and_store
-        await _async_embed_and_store(loop, executor, db, emb, record)
+
+        search_text = record.to_search_text()
+        chunk_defs = record.to_chunks()
+        table_row = {
+            "record_id": record.record_id or "",
+            "bug_title": record.bug_title,
+            "error_log_snippet": record.error_log_snippet,
+            "tried_methods": record.tried_methods,
+            "final_solution": record.final_solution,
+            "project_name": record.project_name or "",
+            "tech_stack": record.tech_stack or "",
+            "root_cause": record.root_cause or "",
+            "create_time": record.create_time,
+            "search_text": search_text,
+            "record_type": "bug",
+        }
+        await _async_embed_and_store(loop, executor, db, emb, table_row, chunk_defs)
 
     def test_save_creates_parent_and_chunks(self, db, emb, record):
         """_async_embed_and_store creates 1 parent + 2 chunks."""

@@ -437,6 +437,15 @@ async def _handle_retrieve(
     return [types.TextContent(type="text", text="\n".join(lines))]
 
 
+# ── Tech-stack exclusion dictionary ──────────────────────────────
+# Prevents LIKE '%java%' from matching "javascript".
+# Key = search term the user entered; Value = list of substrings to exclude.
+# Extend this dict as new false-positive patterns are discovered.
+_TECH_EXCLUSIONS: dict[str, list[str]] = {
+    "java": ["javascript"],
+}
+
+
 def _sanitise_filter_value(raw: str) -> str:
     """Strip anything that isn't alphanumeric, space, underscore, hyphen, or dot."""
     import re
@@ -447,12 +456,20 @@ def _build_filter_clause(
     target_tech_stack: str,
     target_project_name: str,
 ) -> str | None:
-    """Build a case-insensitive WHERE clause from optional filter values."""
+    """Build a case-insensitive WHERE clause from optional filter values.
+
+    Applies exclusion sub-strings (e.g. ``java → javascript``) to prevent
+    ambiguous ``LIKE '%java%'`` from matching unrelated technologies.
+    """
     clauses: list[str] = []
     if target_tech_stack:
         val = _sanitise_filter_value(target_tech_stack)
         if val:
-            clauses.append(f"LOWER(tech_stack) LIKE '%{val.lower()}%'")
+            val_lower = val.lower()
+            clauses.append(f"LOWER(tech_stack) LIKE '%{val_lower}%'")
+            # Append NOT LIKE for exclusion terms
+            for exclude_word in _TECH_EXCLUSIONS.get(val_lower, []):
+                clauses.append(f"LOWER(tech_stack) NOT LIKE '%{exclude_word}%'")
     if target_project_name:
         val = _sanitise_filter_value(target_project_name)
         if val:

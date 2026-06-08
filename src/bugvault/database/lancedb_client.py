@@ -21,7 +21,6 @@ import lancedb
 import pyarrow as pa
 
 from bugvault.config import settings
-from bugvault.models.bug_record import BugRecord
 from bugvault.utils.logger import logger
 
 
@@ -136,10 +135,21 @@ class LanceDBClient:
             raise RuntimeError("BugVault is still initialising")
         try:
             with self._lock:
-                query = self._table.search(query_text)  # type: ignore[union-attr]
-                if filter_clause:
-                    query = query.where(filter_clause)
-                return query.limit(limit or settings.top_k * 4).to_list()
+                try:
+                    query = self._table.search(query_text)  # type: ignore[union-attr]
+                    if filter_clause:
+                        query = query.where(filter_clause)
+                    return query.limit(limit or settings.top_k * 4).to_list()
+                except Exception as exc:
+                    err_str = str(exc)
+                    if filter_clause and "No field named" in err_str:
+                        logger.warning(
+                            "FTS filter '%s' column missing, retrying without filter",
+                            filter_clause,
+                        )
+                        query = self._table.search(query_text)
+                        return query.limit(limit or settings.top_k * 4).to_list()
+                    raise
         except Exception:
             logger.exception("FTS search on bug_records failed (fallback to vector-only)")
             return []
@@ -165,50 +175,45 @@ class LanceDBClient:
         if self._table is None:
             raise RuntimeError("BugVault is still initialising")
         with self._lock:
-            query = self._table.search(embedding)
-            if filter_clause:
-                query = query.where(filter_clause)
-            return query.limit(limit or settings.top_k).to_list()  # type: ignore[union-attr]
+            try:
+                query = self._table.search(embedding)
+                if filter_clause:
+                    query = query.where(filter_clause)
+                return query.limit(limit or settings.top_k).to_list()  # type: ignore[union-attr]
+            except Exception as exc:
+                err_str = str(exc)
+                if filter_clause and "No field named" in err_str:
+                    logger.warning(
+                        "Filter '%s' column missing, retrying without filter",
+                        filter_clause,
+                    )
+                    query = self._table.search(embedding)
+                    return query.limit(limit or settings.top_k).to_list()
+                raise
 
-    def upsert_record(
-        self,
-        search_text: str,
-        embedding: list[float],
-        record: BugRecord,
-    ) -> None:
-        """Write a single record (with its pre-computed *embedding*) to ``bug_records``.
+    def upsert_record(self, table_row: dict) -> None:
+        """Write a single record row to ``bug_records``.
 
-        Markdown archiving is NOT handled here — callers should use
-        ``archive_svc.write_markdown_archive()`` separately.
+        The dict must contain all table columns: vector, record_id, bug_title,
+        error_log_snippet, tried_methods, final_solution, project_name,
+        tech_stack, root_cause, create_time, search_text, record_type.
+
+        Merges on ``record_id`` — existing rows are updated, new ones inserted.
         """
         if self._table is None:
             raise RuntimeError("BugVault is still initialising")
 
-        data_dict = {
-            "vector": embedding,
-            "record_id": record.record_id or "",
-            "bug_title": record.bug_title,
-            "error_log_snippet": record.error_log_snippet,
-            "tried_methods": record.tried_methods,
-            "final_solution": record.final_solution,
-            "project_name": record.project_name or "",
-            "tech_stack": record.tech_stack or "",
-            "root_cause": record.root_cause or "",
-            "create_time": record.create_time,
-            "search_text": search_text,
-        }
-
-        # ── True upsert via merge_insert ────────────────────────────
-        # Matches on ``record_id``: existing record → update all fields;
-        # new record → insert all fields.  This guarantees no duplicate
-        # entries for the same (bug_title + error_log_snippet).
         with self._lock:
             self._table.merge_insert("record_id") \
                 .when_matched_update_all() \
                 .when_not_matched_insert_all() \
-                .execute([data_dict])
+                .execute([table_row])
 
-        logger.info("Saved bug record: %s (record_id=%s)", record.bug_title, record.record_id)
+        logger.info(
+            "Saved record: %s (record_id=%s)",
+            table_row.get("bug_title", "?"),
+            table_row.get("record_id", "?"),
+        )
 
     # ── Public API: chunks table (bugvault_chunks) ──────────────────
 
@@ -256,10 +261,22 @@ class LanceDBClient:
             return []
         try:
             with self._lock:
-                query = self._chunks_table.search(query_text)
-                if filter_clause:
-                    query = query.where(filter_clause)
-                return query.limit(limit or settings.top_k * 4).to_list()
+                try:
+                    query = self._chunks_table.search(query_text)
+                    if filter_clause:
+                        query = query.where(filter_clause)
+                    return query.limit(limit or settings.top_k * 4).to_list()
+                except Exception as exc:
+                    err_str = str(exc)
+                    if filter_clause and "No field named" in err_str:
+                        logger.warning(
+                            "Chunks FTS filter '%s' column missing, "
+                            "retrying without filter",
+                            filter_clause,
+                        )
+                        query = self._chunks_table.search(query_text)
+                        return query.limit(limit or settings.top_k * 4).to_list()
+                    raise
         except Exception:
             logger.exception("Chunks FTS search failed")
             return []
@@ -272,6 +289,11 @@ class LanceDBClient:
     ) -> list[dict]:
         """Perform ANN search on ``bugvault_chunks`` with a pre-computed *embedding*.
 
+        LanceDB validates filters lazily (at ``to_list()`` time).  If the
+        filter references a column that doesn't exist in the table schema
+        (e.g. ``record_type`` on pre-v2 data), we catch the error and
+        retry without the filter.
+
         Args:
             embedding: The query vector.
             filter_clause: Optional SQL filter applied *before* ANN search.
@@ -283,10 +305,21 @@ class LanceDBClient:
         if self._chunks_table is None:
             raise RuntimeError("BugVault is still initialising")
         with self._lock:
-            query = self._chunks_table.search(embedding)
-            if filter_clause:
-                query = query.where(filter_clause)
-            return query.limit(limit or settings.top_k * 4).to_list()  # type: ignore[union-attr]
+            try:
+                query = self._chunks_table.search(embedding)
+                if filter_clause:
+                    query = query.where(filter_clause)
+                return query.limit(limit or settings.top_k * 4).to_list()  # type: ignore[union-attr]
+            except Exception as exc:
+                err_str = str(exc)
+                if filter_clause and "No field named" in err_str:
+                    logger.warning(
+                        "Filter '%s' column missing, retrying without filter",
+                        filter_clause,
+                    )
+                    query = self._chunks_table.search(embedding)
+                    return query.limit(limit or settings.top_k * 4).to_list()
+                raise
 
     def fetch_records_by_ids(self, record_ids: list[str]) -> list[dict]:
         """Batch-fetch full parent records from ``bug_records`` by ``record_id``.
@@ -313,6 +346,31 @@ class LanceDBClient:
 
     # ── Internal helpers ────────────────────────────────────────────
 
+    @staticmethod
+    def _migrate_v2_schema_if_needed(table, table_name: str) -> None:
+        """Add ``record_type`` column to pre-v2 tables (idempotent).
+
+        v2.0.0 introduced the ``record_type`` discriminator column (values:
+        ``'bug'`` or ``'convention'``).  Tables created by v1.1.1 lack this
+        column — calling :meth:`add_columns` once fills existing rows with
+        ``'bug'`` and lets new upserts carry the correct discriminator.
+
+        Safe to call multiple times: checks for column existence first.
+        """
+        field_names = [f.name for f in table.schema]
+        if "record_type" in field_names:
+            return  # already migrated
+
+        logger.info(
+            "Schema migration: adding record_type column to %s",
+            table_name,
+        )
+        table.add_columns({"record_type": "'bug'"})
+        logger.info(
+            "Schema migration: record_type='bug' applied to all %d existing rows",
+            table.count_rows(),
+        )
+
     def _init_table(self) -> None:
         self._db = lancedb.connect(settings.db_uri)
         logger.info("LanceDB connected at: %s", settings.db_uri)
@@ -322,6 +380,7 @@ class LanceDBClient:
         if self.TABLE_NAME in existing_names:
             self._table = self._db.open_table(self.TABLE_NAME)
             _verify_vector_dim(self._table, settings.embedding_dim, self.TABLE_NAME)
+            self._migrate_v2_schema_if_needed(self._table, self.TABLE_NAME)
             logger.info("Opened existing table: %s", self.TABLE_NAME)
         else:
             schema = pa.schema([
@@ -336,6 +395,7 @@ class LanceDBClient:
                 pa.field("root_cause", pa.utf8()),
                 pa.field("create_time", pa.utf8()),
                 pa.field("search_text", pa.utf8()),
+                pa.field("record_type", pa.utf8()),
             ])
             self._table = self._db.create_table(self.TABLE_NAME, schema=schema, mode="overwrite")
             logger.info("Created new table: %s", self.TABLE_NAME)
@@ -351,6 +411,7 @@ class LanceDBClient:
         if self.CHUNKS_TABLE_NAME in existing_names:
             self._chunks_table = self._db.open_table(self.CHUNKS_TABLE_NAME)
             _verify_vector_dim(self._chunks_table, settings.embedding_dim, self.CHUNKS_TABLE_NAME)
+            self._migrate_v2_schema_if_needed(self._chunks_table, self.CHUNKS_TABLE_NAME)
             logger.info("Opened existing table: %s", self.CHUNKS_TABLE_NAME)
         else:
             schema = pa.schema([
@@ -361,6 +422,7 @@ class LanceDBClient:
                 pa.field("search_text", pa.utf8()),
                 pa.field("tech_stack", pa.utf8()),
                 pa.field("project_name", pa.utf8()),
+                pa.field("record_type", pa.utf8()),
             ])
             self._chunks_table = self._db.create_table(
                 self.CHUNKS_TABLE_NAME, schema=schema, mode="overwrite",

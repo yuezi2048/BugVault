@@ -21,6 +21,7 @@ import yaml
 
 from bugvault.database.lancedb_client import LanceDBClient
 from bugvault.models.bug_record import BugRecord
+from bugvault.models.convention_record import ConventionRecord
 from bugvault.services.embedding_svc import EmbeddingService
 from bugvault.utils.logger import logger
 
@@ -41,14 +42,19 @@ def import_from_archive(
     embedding_svc: EmbeddingService,
     archive_path: str | Path,
     max_workers: int = 8,
+    include_conventions: bool = True,
 ) -> dict:
     """Concurrently parse all ``.md`` files, embed, and batch-upsert.
+
+    Automatically detects bug vs convention record type from YAML
+    frontmatter ``type`` field.
 
     Args:
         client: Initialised LanceDBClient.
         embedding_svc: Shared EmbeddingService instance.
         archive_path: Directory containing ``.md`` files.
         max_workers: Thread count for concurrent parsing + embedding.
+        include_conventions: When True, also scans ``{archive_path}/conventions/``.
 
     Returns:
         {total, succeeded, failed, elapsed_sec}
@@ -58,6 +64,12 @@ def import_from_archive(
         raise NotADirectoryError(f"Archive path not found: {archive_dir}")
 
     md_files = sorted(archive_dir.glob("*.md"))
+    # ── Also scan conventions subdirectory ───────────────────────
+    if include_conventions:
+        conv_dir = archive_dir / "conventions"
+        if conv_dir.is_dir():
+            md_files += sorted(conv_dir.glob("*.md"))
+            logger.info("Including %d files from conventions subdirectory", len(md_files))
     total = len(md_files)
     logger.info("Found %d markdown files in %s", total, archive_dir)
 
@@ -162,20 +174,42 @@ def import_from_archive(
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _detect_record_type(path: Path) -> str:
+    """Read the YAML frontmatter ``type`` field to determine bug vs convention."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        fm_match = _FRONTMATTER_RE.search(text)
+        if fm_match:
+            import yaml
+            fm = yaml.safe_load(fm_match.group(1)) or {}
+            return fm.get("type", "bug")
+    except Exception:
+        pass
+    return "bug"
+
+
 def _parse_and_embed(
     path: Path,
     embedding_svc: EmbeddingService,
 ) -> tuple[dict, list[dict]] | None:
     """Parse a single ``.md`` into a parent row dict + list of chunk row dicts.
 
+    Automatically detects bug vs convention format from YAML frontmatter
+    and routes to the appropriate parser.
+
     Returns ``(parent_dict, [chunk_dict, ...])`` on success, or ``None``
     on parse / embedding failure (already logged).
     """
+    record_type = _detect_record_type(path)
+
+    if record_type == "convention":
+        return _parse_and_embed_convention(path, embedding_svc)
+
+    # ── Bug record path (default) ────────────────────────────────
     record = _parse_markdown_to_record(path)
     if record is None:
         return None
 
-    # ── Parent record ────────────────────────────────────────────
     search_text = record.to_search_text()
     try:
         full_embedding = embedding_svc.generate_embedding(search_text)
@@ -195,10 +229,52 @@ def _parse_and_embed(
         "root_cause": record.root_cause or "",
         "create_time": record.create_time,
         "search_text": search_text,
+        "record_type": "bug",
     }
 
-    # ── Chunk records (2 per parent) ─────────────────────────────
     chunk_defs = record.to_chunks()
+    chunk_rows = _embed_chunks(chunk_defs, embedding_svc, path)
+    return parent_dict, chunk_rows
+
+
+def _parse_and_embed_convention(
+    path: Path,
+    embedding_svc: EmbeddingService,
+) -> tuple[dict, list[dict]] | None:
+    """Parse a convention ``.md`` file into a parent dict + chunk rows."""
+    record = _parse_markdown_to_convention_record(path)
+    if record is None:
+        return None
+
+    search_text = record.to_search_text()
+    try:
+        full_embedding = embedding_svc.generate_embedding(search_text)
+    except Exception:
+        logger.exception("Convention full-text embedding failed for %s", path.name)
+        return None
+
+    table_row = record.to_table_row()
+    parent_dict = {
+        "vector": full_embedding,
+        **table_row,
+        "search_text": search_text,
+    }
+
+    chunk_defs = record.to_chunks()
+    chunk_rows = _embed_chunks(chunk_defs, embedding_svc, path)
+    return parent_dict, chunk_rows
+
+
+def _embed_chunks(
+    chunk_defs: list[dict],
+    embedding_svc: EmbeddingService,
+    path: Path,
+) -> list[dict]:
+    """Generate embeddings for chunk definitions and return chunk rows.
+
+    Each row includes fields from the chunk def (tech_stack, project_name,
+    record_type) — the caller is responsible for ensuring these are set.
+    """
     chunk_rows: list[dict] = []
     for cd in chunk_defs:
         try:
@@ -212,11 +288,11 @@ def _parse_and_embed(
             "parent_id": cd["parent_id"],
             "chunk_type": cd["chunk_type"],
             "search_text": cd["search_text"],
-            "tech_stack": record.tech_stack or "",
-            "project_name": record.project_name or "",
+            "tech_stack": cd.get("tech_stack", ""),
+            "project_name": cd.get("project_name", ""),
+            "record_type": cd.get("record_type", "bug"),
         })
-
-    return parent_dict, chunk_rows
+    return chunk_rows
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -324,4 +400,101 @@ def _parse_markdown_to_record(path: Path) -> BugRecord | None:
         return record
     except Exception:
         logger.exception("BugRecord validation failed for %s", path.name)
+        return None
+
+
+def _parse_markdown_to_convention_record(path: Path) -> ConventionRecord | None:
+    """Parse a convention markdown archive file into a ConventionRecord.
+
+    Handles the format produced by ``archive_svc.convention_to_markdown()``:
+
+    .. code-block:: yaml
+       ---
+       date: ...
+       type: convention
+       scope: src/repository/
+       tags:
+         - architecture
+       ---
+       # Rule: ...
+
+       ## 触发场景
+
+       ## 错误行为（不要做）
+
+       ## 正确行为（应该做）
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        logger.exception("Cannot read %s", path)
+        return None
+
+    # ── Extract YAML frontmatter ─────────────────────────────────
+    fm_match = _FRONTMATTER_RE.search(text)
+    frontmatter: dict = {}
+    if fm_match:
+        try:
+            frontmatter = yaml.safe_load(fm_match.group(1)) or {}
+        except Exception:
+            logger.warning("YAML parse warning for %s (will use defaults)", path.name)
+
+    body = text[fm_match.end():] if fm_match else text
+
+    # ── Extract title (``# Rule: Name`` or ``# Name``) ──────────
+    title_match = _TITLE_RE.search(body)
+    convention_name = ""
+    if title_match:
+        raw = title_match.group(1).strip()
+        # Strip leading "Rule:" prefix
+        convention_name = re.sub(r"^Rule:\s*", "", raw, flags=re.IGNORECASE).strip()
+    if not convention_name:
+        logger.warning("No title found in %s, using filename", path.name)
+        convention_name = path.stem.replace("_", " ")
+
+    # ── Extract sections ─────────────────────────────────────────
+    sections: dict[str, str] = {}
+    for m in _SECTION_RE.finditer(body):
+        heading = m.group(1).strip()
+        content = m.group(2).strip()
+        sections[heading] = content
+
+    def _get_section(*aliases: str) -> str:
+        for alias in aliases:
+            if alias in sections:
+                return sections[alias]
+        return ""
+
+    trigger_context = _get_section("触发场景", "Trigger Context")
+    incorrect = _get_section("错误行为（不要做）", "错误行为", "Incorrect Behavior")
+    correct = _get_section("正确行为（应该做）", "正确行为", "Correct Behavior")
+
+    # ── Build tags from frontmatter ──────────────────────────────
+    tags = frontmatter.get("tags", [])
+    if isinstance(tags, list):
+        tags_str = ", ".join(str(t) for t in tags if t)
+    elif isinstance(tags, str):
+        tags_str = tags
+    else:
+        tags_str = ""
+    scope = frontmatter.get("scope", "")
+
+    if not incorrect:
+        incorrect = "(empty)"
+    if not correct:
+        correct = "(empty)"
+
+    try:
+        record = ConventionRecord(
+            convention_name=convention_name or "(untitled)",
+            trigger_context=trigger_context or "(no context)",
+            incorrect_behavior=incorrect,
+            correct_behavior=correct,
+            scope=str(scope) or None,
+            tags=tags_str or None,
+            create_time=str(frontmatter.get("date", "")),
+        )
+        return record
+    except Exception:
+        logger.exception("ConventionRecord validation failed for %s", path.name)
         return None

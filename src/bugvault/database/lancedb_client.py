@@ -235,6 +235,35 @@ class LanceDBClient:
 
         logger.debug("Upserted %d chunk(s)", len(chunks))
 
+    def create_chunks_fts_index(self, replace: bool = True) -> None:
+        """Create (or replace) the Tantivy FTS index on ``bugvault_chunks.search_text``."""
+        if self._chunks_table is None:
+            return
+        try:
+            self._chunks_table.create_fts_index("search_text", replace=replace)  # type: ignore[union-attr]
+            logger.info("FTS index on bugvault_chunks.search_text ready")
+        except Exception:
+            logger.exception("Chunks FTS index creation failed (non-fatal)")
+
+    def search_chunks_fts(
+        self,
+        query_text: str,
+        filter_clause: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """FTS search on ``bugvault_chunks``."""
+        if self._chunks_table is None:
+            return []
+        try:
+            with self._lock:
+                query = self._chunks_table.search(query_text)
+                if filter_clause:
+                    query = query.where(filter_clause)
+                return query.limit(limit or settings.top_k * 4).to_list()
+        except Exception:
+            logger.exception("Chunks FTS search failed")
+            return []
+
     def search_chunks(
         self,
         embedding: list[float],

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from bugvault.config import settings
 from bugvault.models.bug_record import BugRecord
+from bugvault.models.convention_record import ConventionRecord
 
 
 def _clean_timestamp(ts: str) -> str:
@@ -139,5 +140,92 @@ def write_markdown_archive(record: BugRecord) -> Path:
 
     out_path = archive_dir / filename
     content = record_to_markdown(record)
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
+
+
+# ===================================================================
+#  Convention archive — separate directory, different template
+# ===================================================================
+
+CONVENTION_ARCHIVE_SUBDIR = "conventions"
+
+
+def convention_to_markdown(record: ConventionRecord) -> str:
+    """Serialize a convention record as a structured Markdown file.
+
+    Output format:
+
+    .. code-block:: markdown
+
+       ---
+       date: 2026-06-08T10:00:00+00:00
+       type: convention
+       scope: src/repository/
+       tags:
+         - architecture
+         - Java
+       ---
+
+       # Rule: DTO 转换规则
+
+       ## 触发场景
+       ...
+    """
+    date_str = _clean_timestamp(record.create_time)
+    scope = record.scope or "(global)"
+    tags = _clean_tech_stack(record.tags)
+
+    # ── YAML frontmatter ─────────────────────────────────────────────
+    frontmatter: list[str] = [
+        "---",
+        f"date: {date_str}",
+        "type: convention",
+        f"scope: {scope}",
+        "tags:",
+    ]
+    for tag in tags:
+        frontmatter.append(f"  - {tag}")
+    frontmatter.append("---")
+
+    # ── Markdown body ────────────────────────────────────────────────
+    parts: list[str] = [
+        "\n".join(frontmatter),
+        "",
+        f"# Rule: {record.convention_name}",
+        "",
+        "## 触发场景",
+        "",
+        record.trigger_context,
+        "",
+        "## 错误行为（不要做）",
+        "",
+        record.incorrect_behavior,
+        "",
+        "## 正确行为（应该做）",
+        "",
+        record.correct_behavior,
+        "",
+    ]
+
+    return "\n".join(parts)
+
+
+def write_convention_archive(record: ConventionRecord) -> Path:
+    """Write a single convention record as a Markdown file.
+
+    Stored under ``{archive_dir}/conventions/`` so bug and convention
+    archives live in separate directories.
+    """
+    archive_dir = Path(settings.markdown_archive_dir) / CONVENTION_ARCHIVE_SUBDIR
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in record.convention_name)
+    safe_name = safe_name.strip().replace(" ", "_")[:80]
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"{ts}_{safe_name}.md"
+
+    out_path = archive_dir / filename
+    content = convention_to_markdown(record)
     out_path.write_text(content, encoding="utf-8")
     return out_path

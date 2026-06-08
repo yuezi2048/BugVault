@@ -65,3 +65,61 @@ async def test_save_and_retrieve() -> None:
             assert "integration test bug" in retrieve_text, (
                 f"Retrieve did not return saved record:\n{retrieve_text}"
             )
+
+
+@pytest.mark.anyio
+@pytest.mark.e2e
+async def test_save_and_retrieve_convention() -> None:
+    """Save a convention, retrieve it, verify round-trip with correct semantics."""
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "bugvault.main"],
+        cwd="/home/ljy/Documents/myprogram/my-demo/BugVault",
+    )
+
+    async with stdio_client(server_params) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            # ── 1. Initialize handshake ─────────────────────────────
+            init_result = await session.initialize()
+            assert init_result.serverInfo.name == "bugvault"
+
+            # ── 2. Save a convention ────────────────────────────────
+            save_result = await session.call_tool(
+                "save_convention",
+                arguments={
+                    "convention_name": "DTO Conversion",
+                    "trigger_context": "when returning from repository layer",
+                    "incorrect_behavior": "return Entity object directly",
+                    "correct_behavior": "convert Entity to DTO before returning",
+                    "scope": "src/repository/",
+                    "tags": "architecture, Java",
+                },
+            )
+            assert not save_result.isError, (
+                f"Convention save failed: {save_result.content}"
+            )
+            save_text = " ".join(
+                c.text for c in save_result.content if hasattr(c, "text")
+            )
+            assert "saved successfully" in save_text.lower(), (
+                f"Unexpected save response: {save_text}"
+            )
+
+            # ── 3. Retrieve convention ──────────────────────────────
+            retrieve_result = await session.call_tool(
+                "retrieve_convention",
+                arguments={"query": "repository DTO conversion"},
+            )
+            assert not retrieve_result.isError, (
+                f"Convention retrieve failed: {retrieve_result.content}"
+            )
+            retrieve_text = " ".join(
+                c.text for c in retrieve_result.content if hasattr(c, "text")
+            )
+            assert "DTO Conversion" in retrieve_text, (
+                f"Retrieve did not return saved convention:\n{retrieve_text}"
+            )
+            # Convention-specific labels should appear
+            assert "Context:" in retrieve_text or "Incorrect:" in retrieve_text or "Correct:" in retrieve_text, (
+                f"Convention semantics missing from output:\n{retrieve_text}"
+            )

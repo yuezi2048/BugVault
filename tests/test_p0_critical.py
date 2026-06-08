@@ -64,7 +64,21 @@ def _save(
     """Helper: embed + upsert parent record + 2 chunks."""
     search_text = record.to_search_text()
     full_emb = emb.generate_embedding(search_text)
-    db.upsert_record(search_text, full_emb, record)
+    table_row = {
+        "vector": full_emb,
+        "record_id": record.record_id or "",
+        "bug_title": record.bug_title,
+        "error_log_snippet": record.error_log_snippet,
+        "tried_methods": record.tried_methods,
+        "final_solution": record.final_solution,
+        "project_name": record.project_name or "",
+        "tech_stack": record.tech_stack or "",
+        "root_cause": record.root_cause or "",
+        "create_time": record.create_time,
+        "search_text": search_text,
+        "record_type": "bug",
+    }
+    db.upsert_record(table_row)
 
     chunks = record.to_chunks()
     rows = []
@@ -76,8 +90,9 @@ def _save(
             "parent_id": cd["parent_id"],
             "chunk_type": cd["chunk_type"],
             "search_text": cd["search_text"],
-            "tech_stack": record.tech_stack or "",
-            "project_name": record.project_name or "",
+            "tech_stack": cd.get("tech_stack", ""),
+            "project_name": cd.get("project_name", ""),
+            "record_type": cd.get("record_type", "bug"),
         })
     db.upsert_chunks(rows)
 
@@ -90,7 +105,21 @@ def _save_old_style(
     """Helper: upsert parent record ONLY (simulating pre-v1.1.1 data)."""
     search_text = record.to_search_text()
     full_emb = emb.generate_embedding(search_text)
-    db.upsert_record(search_text, full_emb, record)
+    table_row = {
+        "vector": full_emb,
+        "record_id": record.record_id or "",
+        "bug_title": record.bug_title,
+        "error_log_snippet": record.error_log_snippet,
+        "tried_methods": record.tried_methods,
+        "final_solution": record.final_solution,
+        "project_name": record.project_name or "",
+        "tech_stack": record.tech_stack or "",
+        "root_cause": record.root_cause or "",
+        "create_time": record.create_time,
+        "search_text": search_text,
+        "record_type": "bug",
+    }
+    db.upsert_record(table_row)
 
 
 # ═══════════════════════════════════════════════════════════════════

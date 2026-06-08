@@ -148,6 +148,7 @@ class BugRecord(BaseModel):
                 "search_text": raw,
                 "tech_stack": self.tech_stack or "",
                 "project_name": self.project_name or "",
+                "record_type": "bug",
             })
 
         # ── Chunk A: error_log (always 1 chunk) ─────────────────

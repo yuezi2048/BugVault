@@ -22,8 +22,9 @@ import mcp.types as types
 
 from bugvault.config import settings
 from bugvault.models.bug_record import BugRecord
-from bugvault.services.archive_svc import write_markdown_archive
-from bugvault.services.ingestion_svc import validate_and_prepare
+from bugvault.models.convention_record import ConventionRecord
+from bugvault.services.archive_svc import write_convention_archive, write_markdown_archive
+from bugvault.services.ingestion_svc import validate_and_prepare, validate_convention_record
 from bugvault.services.retrieval_svc import rerank, rrf_fusion
 from bugvault.utils.logger import logger
 
@@ -98,6 +99,68 @@ _SAVE_SCHEMA = {
         "root_cause": {"type": "string", "description": "Root cause analysis (optional)"},
     },
     "required": ["bug_title", "error_log_snippet", "tried_methods", "final_solution"],
+}
+
+_CONVENTION_SAVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "convention_name": {
+            "type": "string",
+            "description": "Short descriptive rule name — e.g. 'DTO 转换规则'",
+        },
+        "trigger_context": {
+            "type": "string",
+            "description": "When / where this convention applies — e.g. '在 Repository 层返回数据时'",
+        },
+        "incorrect_behavior": {
+            "type": "string",
+            "description": "What the AI should NOT do — e.g. '直接返回 Entity 对象'",
+        },
+        "correct_behavior": {
+            "type": "string",
+            "description": "What the AI SHOULD do — e.g. '转换为 DTO 后返回'",
+        },
+        "scope": {
+            "type": "string",
+            "description": "Scope of applicability — e.g. 'src/repository/', 'tests/' (optional)",
+        },
+        "tags": {
+            "type": "string",
+            "description": "Categorisation tags — e.g. 'architecture, Java, DDD' (optional)",
+        },
+    },
+    "required": ["convention_name", "trigger_context", "incorrect_behavior", "correct_behavior"],
+}
+
+_CONVENTION_RETRIEVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": (
+                "Natural-language description of the convention scenario — "
+                "e.g. 'how should repository layer return data', "
+                "'what naming convention for test files'"
+            ),
+        },
+        "target_scope": {
+            "type": "string",
+            "description": (
+                "Optional: Narrow search to a specific scope — "
+                "e.g. 'src/repository/', 'tests/', 'Python'. "
+                "Case-insensitive matching against the convention's scope field."
+            ),
+        },
+        "target_tags": {
+            "type": "string",
+            "description": (
+                "Optional: Filter by tags — "
+                "e.g. 'architecture', 'Java', 'testing'. "
+                "Case-insensitive matching against the convention's tags field."
+            ),
+        },
+    },
+    "required": ["query"],
 }
 
 _REFLECT_SCHEMA = {
@@ -194,6 +257,36 @@ def register_tools(
                 ),
                 inputSchema=_SAVE_SCHEMA,
             ),
+            types.Tool(
+                name="save_convention",
+                description=(
+                    "CRITICAL: You MUST call this tool IMMEDIATELY after learning a project "
+                    "convention — architecture rule, business rule, test convention, or style "
+                    "guide — that the AI should follow in future sessions.\n\n"
+                    "MANDATORY WHEN: A human tells you 'this is how we do things here', or "
+                    "you infer a rule from code review, or you discover a pattern that "
+                    "should be consistently followed.\n\n"
+                    "WHAT IT DOES: Stores the convention as a searchable memory in the "
+                    "BugVault knowledge base, retrievable via retrieve_convention. "
+                    "The convention is archived to Markdown and asynchronously embedded "
+                    "into the vector database for future retrieval."
+                ),
+                inputSchema=_CONVENTION_SAVE_SCHEMA,
+            ),
+            types.Tool(
+                name="retrieve_convention",
+                description=(
+                    "CRITICAL: You MUST call this tool BEFORE making changes to any part of "
+                    "the codebase that might be governed by a project convention.\n\n"
+                    "MANDATORY WHEN: You are about to write code, modify architecture, "
+                    "add tests, or follow any pattern — query first to see if there's "
+                    "a recorded convention governing this area.\n\n"
+                    "WHAT IT DOES: Searches the convention memory using the same hybrid "
+                    "retrieval pipeline (vector + FTS + RRF fusion + Cross-Encoder) "
+                    "as bug experience retrieval, but filtered to convention-type records only."
+                ),
+                inputSchema=_CONVENTION_RETRIEVE_SCHEMA,
+            ),
         ]
 
         if reflection_svc is not None:
@@ -229,6 +322,16 @@ def register_tools(
 
             if name == "save_bug_experience":
                 return await _handle_save(
+                    loop, executor, db, embedding_svc, arguments,
+                )
+
+            if name == "save_convention":
+                return await _handle_save_convention(
+                    loop, executor, db, embedding_svc, arguments,
+                )
+
+            if name == "retrieve_convention":
+                return await _handle_retrieve_convention(
                     loop, executor, db, embedding_svc, arguments,
                 )
 
@@ -279,8 +382,26 @@ async def _handle_save(loop, executor, db, embedding_svc, arguments):
 
     # ── ASYNC HOOK (fire-and-forget) ────────────────────────────────
     if settings.enable_async_embedding and embedding_svc is not None:
+        search_text = record.to_search_text()
+        chunk_defs = record.to_chunks()
+        table_row = {
+            "record_id": record.record_id or "",
+            "bug_title": record.bug_title,
+            "error_log_snippet": record.error_log_snippet,
+            "tried_methods": record.tried_methods,
+            "final_solution": record.final_solution,
+            "project_name": record.project_name or "",
+            "tech_stack": record.tech_stack or "",
+            "root_cause": record.root_cause or "",
+            "create_time": record.create_time,
+            "search_text": search_text,
+            "record_type": "bug",
+        }
         asyncio.ensure_future(
-            _async_embed_and_store(loop, executor, db, embedding_svc, record),
+            _async_embed_and_store(
+                loop, executor, db, embedding_svc,
+                table_row, chunk_defs,
+            ),
         )
 
     return texts
@@ -334,25 +455,106 @@ def _sync_save_validate(
     )
 
 
-async def _async_embed_and_store(loop, executor, db, embedding_svc, record):
-    """Background task: generate embedding + LanceDB upsert + chunk upsert.
+# ===================================================================
+#  Save Convention — same zero-blocking async flow
+# ===================================================================
+
+
+async def _handle_save_convention(loop, executor, db, embedding_svc, arguments):
+    """Synchronous validate + archive, then fire-and-forget async embedding."""
+    texts, record = await loop.run_in_executor(
+        executor,
+        _sync_save_convention_validate,
+        arguments,
+    )
+
+    if record is None:
+        return texts
+
+    # ── ASYNC HOOK (fire-and-forget) ────────────────────────────────
+    if settings.enable_async_embedding and embedding_svc is not None:
+        search_text = record.to_search_text()
+        chunk_defs = record.to_chunks()
+        table_row = record.to_table_row()
+        table_row["search_text"] = search_text
+        asyncio.ensure_future(
+            _async_embed_and_store(
+                loop, executor, db, embedding_svc,
+                table_row, chunk_defs,
+            ),
+        )
+
+    return texts
+
+
+def _sync_save_convention_validate(
+    arguments: dict,
+) -> tuple[list[types.TextContent], ConventionRecord | None]:
+    """Pydantic-validate, check required fields, write Markdown archive.
+
+    Returns ``(TextContent list, ConventionRecord)`` on success, or
+    ``(TextContent list, None)`` on validation failure.
+    """
+    try:
+        record = ConventionRecord(**arguments)
+    except Exception as exc:
+        return (
+            [types.TextContent(type="text", text=f"Invalid convention: {exc}")],
+            None,
+        )
+
+    missing = validate_convention_record(record)
+    if missing:
+        return (
+            [types.TextContent(
+                type="text",
+                text=(
+                    f"Convention saved as draft. Missing fields: "
+                    f"{', '.join(missing)}. "
+                    f"You can update the record later."
+                ),
+            )],
+            record,
+        )
+
+    # ── Markdown archive (fast, sync I/O) ────────────────────────
+    try:
+        write_convention_archive(record)
+    except Exception:
+        logger.exception("Failed to write convention archive (non-fatal)")
+
+    return (
+        [types.TextContent(
+            type="text",
+            text=(
+                f"Convention '{record.convention_name}' saved successfully. "
+                f"I will remember this rule for future sessions."
+            ),
+        )],
+        record,
+    )
+
+
+async def _async_embed_and_store(loop, executor, db, embedding_svc, table_row: dict, chunk_defs: list[dict]):
+    """Background task: generate embedding + LanceDB upsert.
+
+    Generic version that works for both BugRecord and ConventionRecord.
+
+    Args:
+        table_row: Pre-built dict matching bug_records table columns (incl. vector).
+        chunk_defs: Pre-built chunk dicts with search_text, tech_stack, etc.
 
     Never awaited by the caller — runs as a fire-and-forget coroutine.
     Failures are logged but do not propagate to the client.
-
-    .. versionchanged:: 1.1.1
-
-       Also generates two parent-child chunks (``error_log`` and
-       ``semantic``) and upserts them into ``bugvault_chunks``.
     """
     try:
-        search_text = record.to_search_text()
-        chunk_defs = record.to_chunks()
+        search_text = table_row["search_text"]
 
         def _work():
             # ── 1. Embed and upsert the full parent record ────────
             full_emb = embedding_svc.generate_embedding(search_text)
-            db.upsert_record(search_text, full_emb, record)
+            table_row["vector"] = full_emb
+            db.upsert_record(table_row)
 
             # ── 2. Embed and upsert each chunk ────────────────────
             chunk_rows: list[dict] = []
@@ -364,18 +566,22 @@ async def _async_embed_and_store(loop, executor, db, embedding_svc, record):
                     "parent_id": cd["parent_id"],
                     "chunk_type": cd["chunk_type"],
                     "search_text": cd["search_text"],
-                    "tech_stack": record.tech_stack or "",
-                    "project_name": record.project_name or "",
+                    "tech_stack": cd.get("tech_stack", ""),
+                    "project_name": cd.get("project_name", ""),
+                    "record_type": cd.get("record_type", "bug"),
                 })
             db.upsert_chunks(chunk_rows)
 
         await loop.run_in_executor(executor, _work)
         logger.info(
-            "Async embedding + storage completed: %s (2 chunks upserted)",
-            record.bug_title,
+            "Async embedding + storage completed: %s",
+            table_row.get("bug_title", table_row.get("record_id", "?")),
         )
     except Exception:
-        logger.exception("Async embedding + storage failed: %s", record.bug_title)
+        logger.exception(
+            "Async embedding + storage failed: %s",
+            table_row.get("bug_title", table_row.get("record_id", "?")),
+        )
 
 
 # ===================================================================
@@ -437,6 +643,46 @@ async def _handle_retrieve(
     return [types.TextContent(type="text", text="\n".join(lines))]
 
 
+# ===================================================================
+#  Retrieve Convention — filtered by record_type='convention'
+# ===================================================================
+
+
+async def _handle_retrieve_convention(
+    loop,
+    executor,
+    db,
+    embedding_svc,
+    arguments: dict,
+) -> list[types.TextContent]:
+    """Convention search with automatic record_type='convention' filtering.
+
+    Uses the same hybrid retrieval pipeline but filters to convention records
+    only and formats output with convention semantics.
+    """
+    query = arguments.get("query", "")
+    target_scope = arguments.get("target_scope", "")
+    target_tags = arguments.get("target_tags", "")
+
+    # ── Sync search + format with record_type='convention' ────────
+    result = await loop.run_in_executor(
+        executor,
+        _sync_search_and_format,
+        db,
+        embedding_svc,
+        query,
+        target_tags,      # mapped to target_tech_stack
+        target_scope,     # mapped to target_project_name
+        "convention",     # record_type
+    )
+
+    if isinstance(result, list):
+        return result
+
+    lines, results = result
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
 # ── Tech-stack exclusion dictionary ──────────────────────────────
 # Prevents LIKE '%java%' from matching "javascript".
 # Key = search term the user entered; Value = list of substrings to exclude.
@@ -483,8 +729,13 @@ def _sync_search_and_format(
     query: str,
     target_tech_stack: str = "",
     target_project_name: str = "",
+    record_type: str = "bug",
 ) -> list[types.TextContent] | tuple[list[str], list[dict]]:
     """ANN search → hybrid rerank → format results into text lines.
+
+    Args:
+        record_type: ``"bug"`` or ``"convention"`` — controls the type filter
+            appended to the WHERE clause and the formatting labels.
 
     Returns either a ``list[TextContent]`` (early exit for errors / empty)
     or a ``(lines, results)`` tuple for further processing.
@@ -508,6 +759,14 @@ def _sync_search_and_format(
 
     rerank_limit = settings.top_k * 4  # expand candidate pool for reranker
     filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
+    # ── Append record_type filter to isolate bug / convention ─
+    # If the table doesn't have the record_type column (pre-v2 data),
+    # the filter will fail gracefully rather than crashing.
+    type_filter = f"record_type = '{record_type}'"
+    filter_clause = (
+        f"({filter_clause}) AND {type_filter}"
+        if filter_clause else type_filter
+    )
     query_emb = embedding_svc.generate_embedding(query)
 
     # ── Primary path: search chunks table ────────────────────────────
@@ -663,23 +922,28 @@ def _sync_search_and_format(
         if fts_results else f"Sources:  {len(vec_results)} vector results"
     )
     lines.append("")
+    is_convention = record_type == "convention"
+    error_label = "Context:" if is_convention else "Error:"
+    tried_label = "Incorrect:" if is_convention else "Tried:"
+    solution_label = "Correct:" if is_convention else "Solution:"
+
     for i, row in enumerate(results, 1):
         lines.append(f"--- Result {i} ---")
         lines.append(f"Title:    {row.get('bug_title', '(untitled)')}")
-        lines.append(f"Project:  {row.get('project_name', '(unknown)')}")
+        lines.append(f"Scope:    {row.get('project_name', '(any)')}")
         lines.append(f"Time:     {row.get('create_time', '(unknown)')}")
         lines.append(
-            f"Error:\n{row.get('error_log_snippet', '')[:settings.max_record_chars]}"
+            f"{error_label}\n{row.get('error_log_snippet', '')[:settings.max_record_chars]}"
         )
         lines.append(
-            f"Tried:\n{row.get('tried_methods', '')[:settings.max_record_chars]}"
+            f"{tried_label}\n{row.get('tried_methods', '')[:settings.max_record_chars]}"
         )
         lines.append(
-            f"Solution:\n{row.get('final_solution', '')[:settings.max_record_chars]}"
+            f"{solution_label}\n{row.get('final_solution', '')[:settings.max_record_chars]}"
         )
         if row.get("root_cause"):
             lines.append(
-                f"Root cause:\n{row['root_cause'][:settings.max_record_chars]}"
+                f"Note:\n{row['root_cause'][:settings.max_record_chars]}"
             )
         lines.append("")
 

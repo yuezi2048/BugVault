@@ -100,7 +100,7 @@ uv sync
 cp .env.example .env
 # Edit .env — set BUGVAULT_ENABLE_RAG_EVAL=true and BUGVAULT_EVAL_LLM_API_KEY
 
-# Verify everything works (70+ tests)
+# Verify everything works (137+ tests)
 uv run pytest -v
 
 # (Optional) Seed the database with sample data
@@ -128,10 +128,6 @@ to launch BugVault as a subprocess. The standard config entry:
 ```
 
 See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
-
-# Run all 137 tests to verify
-uv run pytest -v
-```
 
 ---
 

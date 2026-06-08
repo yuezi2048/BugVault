@@ -103,7 +103,7 @@ uv sync
 cp .env.example .env
 # .env 編集 — BUGVAULT_ENABLE_RAG_EVAL=true と BUGVAULT_EVAL_LLM_API_KEY
 
-# 検証（70+ テスト）
+# 検証（137+ テスト）
 uv run pytest -v
 
 #（オプション）アーカイブから再構築

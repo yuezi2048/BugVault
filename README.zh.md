@@ -101,7 +101,7 @@ uv sync
 cp .env.example .env
 # 编辑 .env — 设置 BUGVAULT_ENABLE_RAG_EVAL=true 和 BUGVAULT_EVAL_LLM_API_KEY
 
-# 验证（70+ 测试）
+# 验证（137+ 测试）
 uv run pytest -v
 
 #（可选）从存档重建索引

@@ -150,13 +150,13 @@ Tokens:       1,692
 
 ## 八、已知 P1 问题（未修复）
 
-| # | 问题 | 影响 | 状态 |
-|---|---|---|---|
-| 1 | LanceDBClient 重复方法定义 | 维护风险 | 📋 待清理 |
-| 2 | 零向量 parent 回退检索结果随机 | 空库场景 | 📋 待修 |
-| 3 | 默认 Cross-Encoder 仅英文 | 中文精排偏差 | 📋 待更换为多语言模型 |
-| 4 | Embedding 维度切换不兼容 | 换模型崩溃 | 📋 待加验证 |
-| 5 | tech_stack LIKE '%java%' 误中 javascript | 过滤不精确 | 📋 待改为精确标签匹配 |
+| # | 问题 | 影响 | 状态 | 修复 |
+|---|---|---|---|---|---|
+| 1 | LanceDBClient 重复方法定义 | 维护风险 | ✅ **已解决** | 无重复方法定义 |
+| 2 | 零向量 parent 回退检索结果随机 | 空库场景 | ✅ **已解决** | 回退改为纯 FTS 搜索（非向量） |
+| 3 | 默认 Cross-Encoder 仅英文 | 中文精排偏差 | ✅ **已解决** | 模型改为 `jinaai/jina-reranker-v2-base-multilingual` |
+| 4 | Embedding 维度切换不兼容 | 换模型崩溃 | ✅ **已解决** | 新增 `_verify_vector_dim()` 启动时校验 |
+| 5 | tech_stack LIKE '%java%' 误中 javascript | 过滤不精确 | ✅ **已解决** | 新增 `_TECH_EXCLUSIONS` 字典，`LIKE` + `NOT LIKE` 混合 |
 
 ---
 

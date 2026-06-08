@@ -39,6 +39,18 @@ BugVault は **ローカルファーストの MCP サーバー** であり、LLM
 
 サイクルを完了するたびに Agent は賢くなります — 過去の解決策を検索可能になり、予防ルールが同じミスの再発を防ぎます。
 
+### v1.1.1 新機能 — 親子チャンク検索
+
+- **🧩 チャンク単位のベクトルインデックス** — 各バグ記録が 1 つの長いベクトルではなく **2 つの短いベクトル** を生成：
+  `error_log` チャンク（正確なエラーマッチング）+ `semantic` チャンク（タイトル + 試行方法 + 解決策）、独立した `bugvault_chunks` テーブルに保存
+- **🎯 精度の高い検索** — 特定のスタックトレースを検索すると `error_log` チャンクに直接ヒットし、長い `final_solution` で希釈されない
+- **🔄 親ドキュメントマッピング** — チャンクレベル RRF 融合 → `parent_id` で重複排除 → `fetch_records_by_ids()` で完全なドキュメントを取得 → Cross-Encoder 再ランク
+- **📦 デュアルテーブルアーキテクチャ** — `bug_records`（親メタデータ + FTS）+ `bugvault_chunks`（子ベクトル + フィルタ用の `tech_stack`/`project_name` 冗長カラム）
+- **🏗️ `rebuild_index.py`** — 1 ソースレコードにつき 1 親レコード + 2 チャンクを生成
+- **🔤 スマート技術スタックフィルター** — `target_tech_stack="Java"` が `"JavaScript"` に誤ヒットしません。
+  除外辞書により `LIKE` のバージョンサフィックス柔軟性（例：`"Python"` → `"Python 3.13"`）を
+  維持しつつ、クロス技術の誤検出を防止します。詳細は [P1 クローズ証明](docs/tests/v1.1.1-test-report.md#8-v111-p1-問題闭环証明) を参照。
+
 ### 3 つのツール
 
 BugVault はバグ修正ライフサイクル全体をカバーする 3 つの MCP ツールを公開し、**各ツールは単一責任** を持ちます：
@@ -91,7 +103,7 @@ uv sync
 cp .env.example .env
 # .env 編集 — BUGVAULT_ENABLE_RAG_EVAL=true と BUGVAULT_EVAL_LLM_API_KEY
 
-# 検証（70+ テスト）
+# 検証（137+ テスト）
 uv run pytest -v
 
 #（オプション）アーカイブから再構築
@@ -295,7 +307,7 @@ Agent がバグを修正した後、**試行パス** と **最終結果** を保
 ## 開発
 
 ```bash
-uv run pytest -v                                    # 全 43 テスト
+uv run pytest -v                                    # 全 137 テスト
 uv run pytest tests/test_core.py -v                 # ユニットテスト
 uv run pytest tests/test_v2_services.py -v          # 振り返り + RAG 評価
 uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
@@ -312,6 +324,7 @@ uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
 | **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](docs/refer/分析/04.为什么选择SDK.md) |
 | **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
 | **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) |
+| **なぜ親子チャンク分割（v1.1.1）？** | 1 レコード 1 ベクトルでは `final_solution` が長いと `error_log_snippet` の特徴が希釈される。`error_log` チャンクと `semantic` チャンクの 2 つに分割し、チャンクレベル RRF + `parent_id` で統合することで精度が向上する。 | [v1.1.1 設計](docs/refer/设计/) |
 |------|------|
 | **なぜ `threading.Lock` が必要？** | LanceDB の `_table` は並行アクセス時に最新バージョンを保証しない |
 | **なぜ `mode='overwrite'`？** | `drop_table + create_table` が古いバージョン参照を残し "file not found" の原因に |

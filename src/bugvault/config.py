@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # ── Retrieval ───────────────────────────────────────────────────
     top_k: int = 5
-    min_semantic_score: float = 0.65  # ANN relevance floor — docs below this are discarded
+    min_semantic_score: float = 0.50  # ANN relevance floor — docs below this are discarded
     enable_recency_decay: bool = False  # off by default — old bugs may still be valuable
     recency_weight: float = 0.3  # only used when enable_recency_decay is True
     semantic_weight: float = 0.7  # only used when enable_recency_decay is True
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
 
     # ── Cross-Encoder Reranker ─────────────────────────────────────
     enable_reranker: bool = True  # False → pure RRF, no cross-encoder
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # 80MB, fast, English
+    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"  # 1.1GB, multilingual
 
     # ── Claim-Level Eval Circuit Breaker ────────────────────────────
     max_claim_evals_per_session: int = 10  # session-wide cap for claim_level

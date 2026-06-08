@@ -39,6 +39,23 @@ All data stays **100% local** — no cloud, no API fees, no data leaks.
 
 Each completed cycle makes the Agent smarter — past solutions are retrievable, and prevention rules prevent the same mistake twice.
 
+### What's New in v1.1.1 — Parent-Child Chunk Retrieval
+
+- **🧩 Chunk-Level Vector Index** — Each bug record now generates **2 focused vectors** instead of 1
+  long concatenation: `error_log` chunk (exact error matching) + `semantic` chunk (title +
+  tried-methods + solution), stored in a dedicated `bugvault_chunks` table
+- **🎯 Precision Recall** — Searching for a specific stack trace hits the `error_log` chunk
+  directly, no longer diluted by long `final_solution` text
+- **🔄 Parent-Document Mapping** — Chunk-level RRF fusion → dedup by `parent_id` → batch
+  `fetch_records_by_ids()` from `bug_records` → Cross-Encoder reranking on full documents
+- **📦 Dual Table Architecture** — `bug_records` (parent metadata + FTS) + `bugvault_chunks`
+  (child vectors + redundant `tech_stack`/`project_name` for filter pushdown)
+- **🏗️ `rebuild_index.py`** — Updated to generate 1 parent + 2 chunks per source record
+- **🔤 Smart Tech-Stack Filtering** — `target_tech_stack="Java"` won't match `"JavaScript"` entries,
+  thanks to an exclusion dictionary that keeps `LIKE` flexibility for version suffixes
+  (e.g. `"Python"` still matches `"Python 3.13"`) while preventing cross-technology false positives.
+  See [test report](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明) for P1 closure proof.
+
 ### What's New in v1.1
 
 - **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md)
@@ -83,7 +100,7 @@ uv sync
 cp .env.example .env
 # Edit .env — set BUGVAULT_ENABLE_RAG_EVAL=true and BUGVAULT_EVAL_LLM_API_KEY
 
-# Verify everything works (70+ tests)
+# Verify everything works (137+ tests)
 uv run pytest -v
 
 # (Optional) Seed the database with sample data
@@ -112,10 +129,6 @@ to launch BugVault as a subprocess. The standard config entry:
 
 See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
 
-# Run all 43 tests to verify
-uv run pytest -v
-```
-
 ---
 
 ## Architecture: Two-Agent Collaboration
@@ -139,19 +152,20 @@ uv run pytest -v
 │                   Memory Agent (BugVault v1.1)                  │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Retrieve Pipeline (funnel architecture)                │    │
+│  │  Retrieve Pipeline (funnel architecture, v1.1.1)         │    │
 │  │                                                         │    │
 │  │  query                                                  │    │
-│  │    ├─→ Vector ANN (top_k×4) ───┐                        │    │
-│  │    ├─→ FTS BM25   (top_k×4) ───┤                        │    │
-│  │    │                            │                        │    │
-│  │    │ WHERE tech_stack /        │                        │    │
-│  │    │ project_name (both paths) │                        │    │
-│  │    │                            │                        │    │
-│  │    ├── RRF Fusion (k=60) ──────┤                        │    │
-│  │    ├── rerank (time decay) ─────┤                        │    │
-│  │    ├── Cross-Encoder rerank ────┤                        │    │
-│  │    └── Truncate → top_k ───────┘                        │    │
+│  │    ├─→ [chunks]  Vector ANN (top_k×4) ───┐             │    │
+│  │    ├─→ [chunks]  FTS BM25   (top_k×4) ───┤             │    │
+│  │    │   WHERE tech_stack / project_name    │             │    │
+│  │    │                                      │             │    │
+│  │    ├── Chunk-level RRF Fusion ────────────┤             │    │
+│  │    ├── Parent dedup (by parent_id) ───────┤             │    │
+│  │    ├── fetch_records_by_ids(parent_ids) ──┘             │    │
+│  │    │                                     ┌──────────────┘    │
+│  │    ├── rerank (time decay) ──────────────┤                   │
+│  │    ├── Cross-Encoder rerank ─────────────┤                   │
+│  │    └── Truncate → top_k ────────────────┘                   │
 │  │                                                         │    │
 │  │  🛠️  RETRIEVE ──  🧠  SAVE ──  📝  REFLECT            │    │
 │  │                                                         │    │
@@ -262,7 +276,7 @@ bugvault/
 │       │   ├── archive_svc.py     # Markdown archive writer
 │       │   └── reflection_svc.py  # CLAUDE.md prevention rules
 │       ├── database/
-│       │   └── lancedb_client.py  # LanceDB: merge_insert + Lock + overwrite
+│       │   └── lancedb_client.py  # LanceDB: dual tables (bug_records + bugvault_chunks), merge_insert + Lock + overwrite
 │       ├── mcp_tools/
 │       │   └── tools.py           # MCP tool registration + dispatch
 │       └── utils/
@@ -452,7 +466,7 @@ See [.env.example](.env.example) for the complete list (20+ options).
 ### Running Tests
 
 ```bash
-# All 43 tests
+# All 137 tests
 uv run pytest -v
 
 # Specific test groups
@@ -500,6 +514,7 @@ write_markdown_archive(record)                 # human-readable backup
 | **Why dual fallback on claim_level?** | Small LLMs (e.g. deepseek-v4-flash) frequently produce malformed JSON on complex CoT prompts. Quota + exception double fallback ensures RAG evaluation never crashes the retrieval pipeline. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
 | **Why Metadata Pre-filtering before ANN?** | Pure semantic search mixes Python `ModuleNotFoundError` with Java `ClassNotFoundException`. LanceDB's columnar `LOWER(tech_stack) LIKE '%python%'` filter reduces the candidate pool before vector search — negligible cost, eliminates cross-language hallucination. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
 | **Why RRF (rank-based) fusion not score-based?** | Vector distance and BM25 score have incommensurable scales — adding them directly is meaningless. RRF uses rank position (k=60), which is scale-agnostic and empirically robust. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
+| **Why parent-child chunking (v1.1.1)?** | Single-vector-per-record dilutes `error_log_snippet` when `final_solution` is long. Chunking creates 2 focused vectors per record — `error_log` chunk for exact error matching, `semantic` chunk for problem-topic similarity — with chunk-level RRF and parent-document assembly via `parent_id`. | [v1.1.1 redesign](docs/refer/设计/) |
 | **Why `ThreadPoolExecutor` for I/O?** | MCP's `asyncio` event loop must never block. LanceDB table operations and embedding inference run in a dedicated thread pool, keeping the event loop responsive for concurrent requests. | — |
 | **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. | — |
 

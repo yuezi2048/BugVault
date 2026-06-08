@@ -304,7 +304,7 @@ Agent がバグを修正した後、**試行パス** と **最終結果** を保
 ## 開発
 
 ```bash
-uv run pytest -v                                    # 全 70 テスト
+uv run pytest -v                                    # 全 137 テスト
 uv run pytest tests/test_core.py -v                 # ユニットテスト
 uv run pytest tests/test_v2_services.py -v          # 振り返り + RAG 評価
 uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）

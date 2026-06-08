@@ -125,7 +125,7 @@ to launch BugVault as a subprocess. The standard config entry:
 
 See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
 
-# Run all 70 tests to verify
+# Run all 137 tests to verify
 uv run pytest -v
 ```
 
@@ -466,7 +466,7 @@ See [.env.example](.env.example) for the complete list (20+ options).
 ### Running Tests
 
 ```bash
-# All 70 tests
+# All 137 tests
 uv run pytest -v
 
 # Specific test groups

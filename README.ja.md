@@ -47,6 +47,9 @@ BugVault は **ローカルファーストの MCP サーバー** であり、LLM
 - **🔄 親ドキュメントマッピング** — チャンクレベル RRF 融合 → `parent_id` で重複排除 → `fetch_records_by_ids()` で完全なドキュメントを取得 → Cross-Encoder 再ランク
 - **📦 デュアルテーブルアーキテクチャ** — `bug_records`（親メタデータ + FTS）+ `bugvault_chunks`（子ベクトル + フィルタ用の `tech_stack`/`project_name` 冗長カラム）
 - **🏗️ `rebuild_index.py`** — 1 ソースレコードにつき 1 親レコード + 2 チャンクを生成
+- **🔤 スマート技術スタックフィルター** — `target_tech_stack="Java"` が `"JavaScript"` に誤ヒットしません。
+  除外辞書により `LIKE` のバージョンサフィックス柔軟性（例：`"Python"` → `"Python 3.13"`）を
+  維持しつつ、クロス技術の誤検出を防止します。詳細は [P1 クローズ証明](docs/tests/v1.1.1-test-report.md#8-v111-p1-問題闭环証明) を参照。
 
 ### 3 つのツール
 

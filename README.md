@@ -51,6 +51,10 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - **📦 Dual Table Architecture** — `bug_records` (parent metadata + FTS) + `bugvault_chunks`
   (child vectors + redundant `tech_stack`/`project_name` for filter pushdown)
 - **🏗️ `rebuild_index.py`** — Updated to generate 1 parent + 2 chunks per source record
+- **🔤 Smart Tech-Stack Filtering** — `target_tech_stack="Java"` won't match `"JavaScript"` entries,
+  thanks to an exclusion dictionary that keeps `LIKE` flexibility for version suffixes
+  (e.g. `"Python"` still matches `"Python 3.13"`) while preventing cross-technology false positives.
+  See [test report](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明) for P1 closure proof.
 
 ### What's New in v1.1
 

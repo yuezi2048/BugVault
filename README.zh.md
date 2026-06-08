@@ -47,6 +47,9 @@ BugVault 是一个 **本地优先的 MCP 服务器** —— 作为 LLM（决策 
 - **🔄 父文档映射** — Chunk 级 RRF 融合 → 按 `parent_id` 去重 → `fetch_records_by_ids()` 回查完整文档 → Cross-Encoder 精排
 - **📦 双表架构** — `bug_records`（父元数据 + FTS） + `bugvault_chunks`（子向量 + 冗余 `tech_stack`/`project_name` 支持过滤下推）
 - **🏗️ `rebuild_index.py`** — 每条源记录生成 1 条父记录 + 2 条子块
+- **🔤 智能技术栈过滤** — `target_tech_stack="Java"` 不会误匹配 `"JavaScript"`，
+  通过排除字典在保留 `LIKE` 版本后缀弹性（如 `"Python"` 仍匹配 `"Python 3.13"`）的同时
+  消除跨技术栈误中。详情见 [P1 闭环证明](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明)。
 
 ### 三大核心工具
 

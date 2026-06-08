@@ -2,9 +2,9 @@
 
 # BugVault
 
-**Bug Experience Vault & Intelligent Retrieval System**
+**AI Bug Vault — 同じミスを AI に繰り返させない。**
 
-*LLM に永続的なセッション間デバッグ記憶を提供するローカルファースト MCP サーバー。*
+*ローカルファーストの MCP サーバー。AI にプロジェクトの「正しいやり方」を記憶させます。*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io)
@@ -20,12 +20,23 @@
 
 ## 概要
 
-BugVault は **ローカルファーストの MCP サーバー** であり、LLM（意思決定 Agent）とペアを組む専用「記憶 Agent」として機能し、**2-Agent 協調デバッグシステム** を構成します。
+BugVault は **ローカルファーストの MCP サーバー** であり、AI にプロジェクトの「正しいやり方」を記憶させるためのツールです。
 
-- **意思決定 Agent**（Claude / 任意の LLM）：バグの診断、修正案の策定、保存・振り返りの判断
-- **記憶 Agent**（BugVault）：意味検索、解決策の永続化、RAG 品質評価、予防ルールの書き込み
+**「AI Bug」とは？**
 
-すべてのデータは **100% ローカル** に保存 — クラウドなし、API 費用なし、データ漏洩なし。
+Bug とは単なるクラッシュではありません。AI Bug とは **LLM がプロジェクトの期待に沿わない出力をすることすべて** を指します：
+
+| 種類 | 例 |
+|------|------|
+| 🐛 **コードエラー** | `KeyError: 42` — ロジック誤り、API 呼び出し誤り |
+| 📐 **ビジネスルール** | 金額の単位が円ではなく銭になった；ID が UUID ではなく連番になった |
+| 🏗️ **アーキテクチャ規約** | プロジェクトが使っていない lodash を import した；Options API ではなく Composition API を使うべきだった |
+| 🧪 **テスト規約** | プロジェクトは `.spec.ts` なのに `.test.ts` で作成した；Vitest なのに Jest を使った |
+| 🚦 **スタイル規約** | プロジェクトは Tailwind なのに SCSS を書いた；関数コンポーネントなのにクラスコンポーネントを書いた |
+
+BugVault は同一のアーキテクチャで **これらすべて** を扱います：**検索 → 修正 → 記憶 → 予防**。
+
+すべてのデータは **100% ローカル** 保存 — クラウド不要、API 費用不要、データ漏洩なし。
 
 ### Agent 自己進化サイクル
 

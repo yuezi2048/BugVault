@@ -2,9 +2,9 @@
 
 # BugVault
 
-**Bug Experience Vault & Intelligent Retrieval System**
+**AI Bug Vault — 同样的错误，AI 不应该犯第二次。**
 
-*为 LLM 提供持久的跨会话排障记忆的本地优先 MCP 服务器。*
+*一个本地优先的 MCP 服务器，让 AI 记住你的项目「应该怎么做」。*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io)
@@ -20,10 +20,21 @@
 
 ## 项目介绍
 
-BugVault 是一个 **本地优先的 MCP 服务器** —— 作为 LLM（决策 Agent）的专属"记忆 Agent"，两者协同构成 **双 Agent 排障系统**。
+BugVault 是一个 **本地优先的 MCP 服务器**，让 AI 记住你的项目「应该怎么做」。
 
-- **决策 Agent**（Claude / 任何 LLM）：诊断 Bug、制定修复方案、决定保存和复盘的内容。
-- **记忆 Agent**（BugVault）：提供语义检索、持久化解方案、评估 RAG 质量、写入预防规则。
+**什么是 "AI Bug"？**
+
+Bug 不只是堆栈报错。AI Bug 是 **AI 做了任何不符合项目预期的事情**：
+
+| 类型 | 示例 |
+|------|------|
+| 🐛 **代码错误** | `KeyError: 42` — 逻辑错误、API 调用错误 |
+| 📐 **业务规则** | 金额用了元而不是分；ID 用了自增而不是 UUID |
+| 🏗️ **架构约定** | 项目不用 lodash 但 AI 引入了；项目用 Composition API 但 AI 写了 Options API |
+| 🧪 **测试规范** | 项目用 `.spec.ts` 但 AI 写了 `.test.ts`；项目用 Vitest 但 AI 用了 Jest |
+| 🚦 **风格规范** | 项目用 Tailwind 但 AI 写了 SCSS；项目用函数组件但 AI 写了类组件 |
+
+BugVault 用同一套架构捕获 **所有这些**：**检索 → 纠正 → 记住 → 预防**。
 
 所有数据 **100% 本地存储** — 无云端、无 API 费用、无数据泄露。
 

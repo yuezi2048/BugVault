@@ -2,9 +2,9 @@
 
 # BugVault
 
-**Bug Experience Vault & Intelligent Retrieval System**
+**The AI Bug Vault — Catch every mistake once, never repeat it.**
 
-*A local-first MCP server that gives LLMs persistent, cross-session bug troubleshooting memory.*
+*A local-first MCP server that gives LLMs persistent, cross-session memory for what "right" looks like in your project.*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io)
@@ -20,10 +20,21 @@
 
 ## What is BugVault?
 
-BugVault is a **local-first MCP (Model Context Protocol) server** — a dedicated "Memory Agent" that pairs with your LLM (the "Decision Agent") to form a **two-agent collaborative system** for bug troubleshooting.
+BugVault is a **local-first MCP (Model Context Protocol) server** that gives AI a memory of what "right" looks like in your project.
 
-- **Decision Agent** (Claude / any LLM): Diagnoses bugs, devises fixes, decides what to save and reflect on.
-- **Memory Agent** (BugVault): Provides semantic retrieval, persists resolutions, evaluates RAG quality, and writes prevention rules.
+**What is an "AI Bug"?**
+
+A bug isn't just a stack trace. An AI Bug is **anything an LLM does that doesn't match your project's expectations**:
+
+| Type | Example |
+|------|---------|
+| 🐛 **Code Error** | `KeyError: 42` — wrong logic, wrong API call |
+| 📐 **Business Rule** | Used CNY yuan instead of cents; used auto-increment ID instead of UUID |
+| 🏗️ **Architecture Convention** | Imported lodash when project uses vanilla JS; used Options API when project uses Composition API |
+| 🧪 **Test Convention** | Named file `.test.ts` when project uses `.spec.ts`; used Jest when project uses Vitest |
+| 🚦 **Style & Structure** | Used SCSS when project uses Tailwind; used class component when project uses functional |
+
+BugVault captures **all of these** — not just crashes — with a single architecture: **retrieve → correct → remember → prevent**.
 
 All data stays **100% local** — no cloud, no API fees, no data leaks.
 

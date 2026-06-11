@@ -236,54 +236,48 @@ def register_tools(
             types.Tool(
                 name="retrieve_bug_experience",
                 description=(
-                    "CRITICAL: You MUST ALWAYS call this tool FIRST before providing any fix, suggestion, or analysis for a bug, error log, stack trace, or exception. "
-                    "NEVER rely on your general knowledge or training data until you have queried this local BugVault database for historical context. "
-                    "MANDATORY WORKFLOW: When user presents ANY error message, crash report, debugging issue, or code problem → IMMEDIATELY invoke this tool with the error details. "
-                    "ONLY after retrieving past experiences from the knowledge base should you proceed to analyze and propose solutions. "
-                    "This ensures you leverage accumulated project-specific insights instead of repeating past mistakes. "
-                    "FAILURE TO CALL THIS TOOL FIRST will result in suboptimal debugging and ignored organizational knowledge."
+                    "开工前查历史坑。与 retrieve_convention 配合使用，见下方决策树。\n\n"
+                    "决策树：\n"
+                    "  准备改代码？\n"
+                    "  ├─ 涉及业务逻辑 / 数据库 / API / 性能 / 安全\n"
+                    "  │  → 先调 retrieve_bug_experience（查历史坑）\n"
+                    "  │  → 再调 retrieve_convention（查项目规范）\n"
+                    "  ├─ 涉及架构 / 命名 / UI 规范\n"
+                    "  │  → 调 retrieve_convention 即可\n"
+                    "  └─ 纯样式 / 纯文案 / 构建配置\n"
+                    "     → 跳过，直接开工"
                 ),
                 inputSchema=_RETRIEVE_SCHEMA,
             ),
             types.Tool(
                 name="save_bug_experience",
                 description=(
-                    "CRITICAL: You MUST call this tool IMMEDIATELY after successfully resolving ANY bug, error, or unexpected behavior — without exception. "
-                    "MANDATORY TRIGGER: Every time a debugging session concludes with a working solution, you are REQUIRED to persist this experience using save_bug_experience. "
-                    "REQUIRED FIELDS: bug_title (concise descriptive title), error_log_snippet (exact error message or stack trace), tried_methods (what you attempted that failed), final_solution (the working fix). "
-                    "OPTIONAL ENRICHMENT: project_name, tech_stack, root_cause can be added later but core fields are mandatory NOW. "
-                    "WARNING: Skipping this step means losing valuable institutional knowledge and forcing future developers to re-solve the same problem. "
-                    "ALWAYS capture the lesson while it's fresh — do NOT delay or skip this critical knowledge preservation step."
+                    "保存 Bug 修复记录。适用于：修 Bug、修异常、改错误逻辑。\n\n"
+                    "与 save_convention 的区别：\n"
+                    "- 修 Bug（运行结果不对）→ 用 save_bug_experience\n"
+                    "- 定规范（代码该怎么写）→ 用 save_convention\n"
+                    "- 根因是系统性误解 → 再追加 reflect_and_prevent_error\n\n"
+                    "必须与 reasonix-doc/ 文档双写（各存一份，缺一违规）。"
                 ),
                 inputSchema=_SAVE_SCHEMA,
             ),
             types.Tool(
                 name="save_convention",
                 description=(
-                    "CRITICAL: You MUST call this tool IMMEDIATELY after learning a project "
-                    "convention — architecture rule, business rule, test convention, or style "
-                    "guide — that the AI should follow in future sessions.\n\n"
-                    "MANDATORY WHEN: A human tells you 'this is how we do things here', or "
-                    "you infer a rule from code review, or you discover a pattern that "
-                    "should be consistently followed.\n\n"
-                    "WHAT IT DOES: Stores the convention as a searchable memory in the "
-                    "BugVault knowledge base, retrievable via retrieve_convention. "
-                    "The convention is archived to Markdown and asynchronously embedded "
-                    "into the vector database for future retrieval."
+                    "保存项目规范（架构规则/命名约定/部署配置/测试约定等）。\n\n"
+                    "适用于：发现了可复用的模式或规则，希望 Agent 以后自动遵守。\n\n"
+                    "判断标准：\n"
+                    "  \"这次踩的坑，下次换个地方也可能踩\" → save_convention\n"
+                    "  \"这个 Bug 是这个函数独有的，换个场景不会复现\" → 只 save_bug_experience 即可"
                 ),
                 inputSchema=_CONVENTION_SAVE_SCHEMA,
             ),
             types.Tool(
                 name="retrieve_convention",
                 description=(
-                    "CRITICAL: You MUST call this tool BEFORE making changes to any part of "
-                    "the codebase that might be governed by a project convention.\n\n"
-                    "MANDATORY WHEN: You are about to write code, modify architecture, "
-                    "add tests, or follow any pattern — query first to see if there's "
-                    "a recorded convention governing this area.\n\n"
-                    "WHAT IT DOES: Searches the convention memory using the same hybrid "
-                    "retrieval pipeline (vector + FTS + RRF fusion + Cross-Encoder) "
-                    "as bug experience retrieval, but filtered to convention-type records only."
+                    "查项目规范（命名/架构/数据库/部署等约定）。\n"
+                    "配合 bugvault_retrieve_bug_experience 使用 —— 先查坑再查规范。\n\n"
+                    "纯样式/文案修改可以跳过此工具。"
                 ),
                 inputSchema=_CONVENTION_RETRIEVE_SCHEMA,
             ),
@@ -294,12 +288,11 @@ def register_tools(
                 types.Tool(
                     name="reflect_and_prevent_error",
                     description=(
-                        "CRITICAL: After fixing a significant or recurring bug, you MUST call this tool to perform root cause analysis and generate preventive rules. "
-                        "MANDATORY FOR: Architecture-level mistakes, repeated errors, design pattern violations, or bugs revealing systemic issues. "
-                        "WORKFLOW: Analyze WHY the bug occurred → Identify the fundamental misunderstanding or flawed assumption → Formulate an actionable rule → Persist to CLAUDE.md. "
-                        "REQUIRED FIELDS: reflection_text (detailed analysis of what caused the bug and why), error_category (classification from predefined enum), preventive_rule (concise, actionable guideline to prevent recurrence). "
-                        "IMPACT: This transforms individual debugging sessions into organizational learning — the generated rules become permanent guardrails in CLAUDE.md. "
-                        "DO NOT SKIP: Failing to reflect means the same mistake will likely recur. Capture the lesson permanently."
+                        "根因反思 + 生成预防规则。仅在以下情况调用：\n"
+                        "1. Agent 自身的系统性误解（不是代码 Bug，是 Agent 想错了）\n"
+                        "2. 同一个模式的 Bug 反复出现\n"
+                        "3. 架构层面的错误决策\n\n"
+                        "一般修 Bug 只需要 save_bug_experience，不必每次都用这个。"
                     ),
                     inputSchema=_REFLECT_SCHEMA,
                 ),

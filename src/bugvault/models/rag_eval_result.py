@@ -67,3 +67,9 @@ class RAGEvalResult(BaseModel):
         default=None,
         description="Total tokens (prompt + completion) used by the judge LLM",
     )
+
+    # ── Estimated monetary cost ────────────────────────────────────
+    estimated_cost_usd: float | None = Field(
+        default=None,
+        description="Estimated USD cost for this LLM call, or None if unknown",
+    )

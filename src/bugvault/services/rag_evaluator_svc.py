@@ -225,11 +225,24 @@ class SimpleRAGEvalStrategy:
 
     @staticmethod
     def _attach_usage(result: RAGEvalResult, usage: dict | None) -> None:
-        """Set token usage fields on *result* from the API usage dict."""
+        """Set token usage fields on *result* from the API usage dict.
+
+        Also estimates USD cost when model and token counts are available.
+        """
         if usage:
             result.prompt_tokens = usage.get("prompt_tokens")
             result.completion_tokens = usage.get("completion_tokens")
             result.total_tokens = usage.get("total_tokens")
+            # Estimate cost in a fire-and-forget way (best-effort)
+            try:
+                from bugvault.observability import estimate_cost
+                result.estimated_cost_usd = estimate_cost(
+                    model=result.strategy_used + "_eval",
+                    prompt_tokens=result.prompt_tokens or 0,
+                    completion_tokens=result.completion_tokens or 0,
+                )
+            except Exception:
+                pass  # cost estimation is best-effort
 
     @staticmethod
     def _parse_response(raw: str) -> RAGEvalResult:

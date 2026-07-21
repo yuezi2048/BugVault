@@ -26,7 +26,7 @@ from bugvault.models.convention_record import ConventionRecord
 from bugvault.services.archive_svc import write_convention_archive, write_markdown_archive
 from bugvault.services.ingestion_svc import validate_and_prepare, validate_convention_record
 from bugvault.services.retrieval_svc import rerank, rrf_fusion
-from bugvault.utils.logger import logger
+from bugvault.utils.logger import logger, set_trace_id
 
 # Lazy imports (to avoid circular deps at module level):
 #   EmbeddingService  → services.embedding_svc  (conditionally imported)
@@ -304,51 +304,94 @@ def register_tools(
     async def handle_call_tool(
         name: str, arguments: dict,
     ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+        # ── Generate trace_id for this request ────────────────────
+        trace_id = set_trace_id()
         loop = asyncio.get_running_loop()
+
+        # ── Structured entry log ──────────────────────────────────
+        from bugvault.observability import AiCallLogEntry, append_ai_call_log, _classify_error
+        import time
+
+        entry_log = AiCallLogEntry(
+            event_type="entry", tool_name=name,
+            metadata={"arguments": {k: v for k, v in arguments.items() if k != "eval_llm_api_key"}},
+        )
+        append_ai_call_log(entry_log)
+        logger.info("Tool start: %s [trace=%s]", name, trace_id)
+
+        start = time.monotonic()
 
         try:
             if name == "retrieve_bug_experience":
-                return await _handle_retrieve(
+                result = await _handle_retrieve(
                     loop, executor, db, embedding_svc, rag_evaluator,
                     arguments,
                 )
-
-            if name == "save_bug_experience":
-                return await _handle_save(
+            elif name == "save_bug_experience":
+                result = await _handle_save(
                     loop, executor, db, embedding_svc, arguments,
                 )
-
-            if name == "save_convention":
-                return await _handle_save_convention(
+            elif name == "save_convention":
+                result = await _handle_save_convention(
                     loop, executor, db, embedding_svc, arguments,
                 )
-
-            if name == "retrieve_convention":
-                return await _handle_retrieve_convention(
+            elif name == "retrieve_convention":
+                result = await _handle_retrieve_convention(
                     loop, executor, db, embedding_svc, arguments,
                 )
-
-            if name == "reflect_and_prevent_error":
+            elif name == "reflect_and_prevent_error":
                 if reflection_svc is None:
-                    return [types.TextContent(
+                    result = [types.TextContent(
                         type="text",
                         text="Reflection tool is not enabled. "
                              "Set BUGVAULT_ENABLE_REFLECTION_TOOL=true in .env",
                     )]
-                return await loop.run_in_executor(
-                    executor,
-                    _sync_reflect,
-                    reflection_svc,
-                    arguments,
-                )
+                else:
+                    result = await loop.run_in_executor(
+                        executor,
+                        _sync_reflect,
+                        reflection_svc,
+                        arguments,
+                    )
+            else:
+                result = [types.TextContent(
+                    type="text",
+                    text=f"Unknown tool: {name}",
+                )]
 
-            return [types.TextContent(
-                type="text",
-                text=f"Unknown tool: {name}",
-            )]
+            duration = (time.monotonic() - start) * 1000
+
+            # ── Structured exit log (success) ─────────────────────
+            exit_log = AiCallLogEntry(
+                event_type="exit", tool_name=name,
+                status="ok", error_code="ok",
+                duration_ms=round(duration, 2),
+            )
+            append_ai_call_log(exit_log)
+            logger.info(
+                "Tool done: %s [trace=%s] (%.0f ms)",
+                name, trace_id, duration,
+            )
+
+            return result
 
         except Exception as exc:
-            logger.exception("Tool call failed: %s", name)
+            duration = (time.monotonic() - start) * 1000
+
+            # ── Structured exit log (error) ───────────────────────
+            error_code = _classify_error(exc)
+            exit_log = AiCallLogEntry(
+                event_type="exit", tool_name=name,
+                status="error", error_code=error_code,
+                error_message=str(exc)[:500],
+                duration_ms=round(duration, 2),
+            )
+            append_ai_call_log(exit_log)
+            logger.exception(
+                "Tool error: %s [trace=%s] (%.0f ms) code=%s",
+                name, trace_id, duration, error_code,
+            )
+
             return [types.TextContent(
                 type="text",
                 text=f"Error executing {name}: {exc}",

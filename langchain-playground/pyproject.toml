@@ -1,0 +1,14 @@
+[project]
+name = "langchain-playground"
+version = "0.1.0"
+description = "LangChain 核心模块动手练习：LCEL / RAG / Tool Calling / Agent"
+requires-python = ">=3.13"
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-chroma>=0.2.0",
+    "langchain-text-splitters>=0.3.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]

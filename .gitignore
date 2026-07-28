@@ -36,3 +36,9 @@ integration_test.log
 
 # Reasonix Code assistant runtime artifacts
 .reasonix/
+
+# 个人简历相关（开源仓库不提交）
+resume/
+
+# 第三方参考项目（开源仓库不提交）
+refer/

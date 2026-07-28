@@ -38,7 +38,6 @@ In plan mode the harness blocks writer tools: do read-only research, then write 
 concise plan as your reply and stop. The user is asked to approve before anything
 is changed; once approved, work through the steps, updating the task list as you go."""
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
-max_steps   = 0
 temperature = 0.0
 auto_plan   = "ask"   # off|ask|on; ask/on auto-enter plan mode for complex tasks
 # auto_plan_classifier = "deepseek-flash"   # optional; only used for borderline tasks
@@ -65,14 +64,7 @@ enabled = []   # empty = all built-in tools
 # paths = ["~/my-skills", "../shared/skills"]   # extra custom skill roots
 
 [permissions]
-# Per-call gating. mode = writer fallback when no rule matches: ask|allow|deny.
-# Readers always default to allow. Precedence: deny > ask > allow > fallback.
-# Rules are "ToolName" or "ToolName(glob)"; '*' matches any run, '?' one char.
-mode  = "ask"
-# deny = ["bash(rm -rf*)", "bash(git push*)"]   # hard-blocked in every mode
-# allow = ["bash(go test*)", "bash(git status*)"]   # never prompted
-# ask = ["write_file"]   # force a prompt even if otherwise allowed
-
+allow = ["explore", "task"]
 [sandbox]
 # Confine tool blast radius. File-writers (write_file/edit_file/multi_edit)
 # may only write under workspace_root (empty = current dir) + allow_write.

@@ -27,12 +27,19 @@ class EmbeddingService:
 
     def generate_embedding(self, text: str) -> list[float]:
         """Embed *text* into a dense vector and return it as a flat list."""
+        return self.generate_embeddings([text])[0]
+
+    def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of *texts* into dense vectors (ONNX batch-optimized).
+
+        Use this instead of repeated ``generate_embedding`` calls when you
+        have many texts — ONNX inference benefits significantly from
+        internal batching.
+        """
         if self._model is None:
             msg = "Embedding model is not initialised"
             raise RuntimeError(msg)
-        # fastembed returns an iterable of lists; consume it
-        result = list(self._model.embed([text]))
-        return result[0]  # type: ignore[return-value]
+        return [r for r in self._model.embed(texts)]  # type: ignore[misc]
 
     # ── internal helpers ────────────────────────────────────────────
 

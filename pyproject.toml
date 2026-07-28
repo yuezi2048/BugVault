@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "pyarrow>=19.0.0",
+    "ladybug>=0.18.2",
 ]
 
 [dependency-groups]

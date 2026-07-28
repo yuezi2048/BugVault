@@ -66,9 +66,16 @@ async def main() -> None:
 
     rag_evaluator = RAGEvaluator()
 
+    # ── Graph overlay (LadybugDB, optional) ────────────────────────
+    from bugvault.database.graph_db import get_graph_db
+
+    graph_db = get_graph_db()
+    if graph_db is not None:
+        logger.info("Graph overlay (LadybugDB) initialised")
+
     # ── MCP server + tool registration ─────────────────────────────
     server = Server(settings.server_name)
-    register_tools(server, db, embedding_svc, reflection_svc, rag_evaluator, executor)
+    register_tools(server, db, embedding_svc, reflection_svc, rag_evaluator, graph_db, executor)
 
     # ── Enter MCP stdio event loop ─────────────────────────────────
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

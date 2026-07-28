@@ -207,6 +207,7 @@ def register_tools(
     embedding_svc=None,  # EmbeddingService | None
     reflection_svc=None,  # ReflectionService | None
     rag_evaluator=None,  # RAGEvaluator | None
+    graph_db=None,  # GraphDB | None
     executor: concurrent.futures.ThreadPoolExecutor | None = None,
 ) -> None:
     """Register list-tools and call-tool handlers on *server*.
@@ -221,6 +222,8 @@ def register_tools(
         Optional — required for ``reflect_and_prevent_error`` tool.
     rag_evaluator : RAGEvaluator | None
         Optional — required for RAG evaluation on retrieval.
+    graph_db : GraphDB | None
+        Optional graph overlay, reserved for graph-backed tool operations.
     executor : ThreadPoolExecutor | None
         Shared thread pool; created internally if not provided.
     """

@@ -25,7 +25,7 @@ from bugvault.models.bug_record import BugRecord
 from bugvault.models.convention_record import ConventionRecord
 from bugvault.services.archive_svc import write_convention_archive, write_markdown_archive
 from bugvault.services.ingestion_svc import validate_and_prepare, validate_convention_record
-from bugvault.services.retrieval_svc import rerank, rrf_fusion
+from bugvault.services.retrieval_svc import RetrievalModule, RetrievalRequest
 from bugvault.utils.logger import logger, set_trace_id
 
 # Lazy imports (to avoid circular deps at module level):
@@ -642,34 +642,38 @@ async def _handle_retrieve(
     target_tech_stack = arguments.get("target_tech_stack", "")
     target_project_name = arguments.get("target_project_name", "")
 
-    # ── Sync search + format runs in executor ────────────────────
-    result = await loop.run_in_executor(
+    result = await _retrieve_records(
+        loop,
         executor,
-        _sync_search_and_format,
         db,
         embedding_svc,
-        query,
-        target_tech_stack,
-        target_project_name,
+        RetrievalRequest(
+            query=query,
+            target_tech_stack=target_tech_stack,
+            target_project_name=target_project_name,
+        ),
     )
+    if result.error_message:
+        return [types.TextContent(type="text", text=result.error_message)]
+    if not result.records and not result.had_candidates:
+        return [types.TextContent(
+            type="text",
+            text="No matching bug experiences found in the knowledge base.",
+        )]
 
-    # Early-exit for error / empty responses
-    if isinstance(result, list):
-        return result  # already a list[TextContent] (error or empty)
-
-    lines, results = result
+    lines = _format_retrieval_result(result, "bug")
 
     # ── Async RAG evaluation (I/O-bound, outside executor) ──────
     if (
         rag_evaluator
         and rag_evaluator.enabled
         and eval_depth != "none"
-        and results
+        and result.records
     ):
         try:
             from bugvault.services.rag_evaluator_svc import format_context
 
-            context = format_context(results, rag_evaluator.top_k)
+            context = format_context(result.records, rag_evaluator.top_k)
             eval_result = await rag_evaluator.evaluate(
                 query, context, eval_depth,
             )
@@ -703,271 +707,58 @@ async def _handle_retrieve_convention(
     target_scope = arguments.get("target_scope", "")
     target_tags = arguments.get("target_tags", "")
 
-    # ── Sync search + format with record_type='convention' ────────
-    result = await loop.run_in_executor(
+    result = await _retrieve_records(
+        loop,
         executor,
-        _sync_search_and_format,
         db,
         embedding_svc,
-        query,
-        target_tags,      # mapped to target_tech_stack
-        target_scope,     # mapped to target_project_name
-        "convention",     # record_type
+        RetrievalRequest(
+            query=query,
+            target_tech_stack=target_tags,
+            target_project_name=target_scope,
+            record_type="convention",
+        ),
     )
-
-    if isinstance(result, list):
-        return result
-
-    lines, results = result
-    return [types.TextContent(type="text", text="\n".join(lines))]
-
-
-# ── Tech-stack exclusion dictionary ──────────────────────────────
-# Prevents LIKE '%java%' from matching "javascript".
-# Key = search term the user entered; Value = list of substrings to exclude.
-# Extend this dict as new false-positive patterns are discovered.
-_TECH_EXCLUSIONS: dict[str, list[str]] = {
-    "java": ["javascript"],
-}
-
-
-def _sanitise_filter_value(raw: str) -> str:
-    """Strip anything that isn't alphanumeric, space, underscore, hyphen, or dot."""
-    import re
-    return re.sub(r"[^a-zA-Z0-9_\-\s. ]", "", raw.strip())
-
-
-def _build_filter_clause(
-    target_tech_stack: str,
-    target_project_name: str,
-) -> str | None:
-    """Build a case-insensitive WHERE clause from optional filter values.
-
-    Applies exclusion sub-strings (e.g. ``java → javascript``) to prevent
-    ambiguous ``LIKE '%java%'`` from matching unrelated technologies.
-    """
-    clauses: list[str] = []
-    if target_tech_stack:
-        val = _sanitise_filter_value(target_tech_stack)
-        if val:
-            val_lower = val.lower()
-            clauses.append(f"LOWER(tech_stack) LIKE '%{val_lower}%'")
-            # Append NOT LIKE for exclusion terms
-            for exclude_word in _TECH_EXCLUSIONS.get(val_lower, []):
-                clauses.append(f"LOWER(tech_stack) NOT LIKE '%{exclude_word}%'")
-    if target_project_name:
-        val = _sanitise_filter_value(target_project_name)
-        if val:
-            clauses.append(f"LOWER(project_name) LIKE '%{val.lower()}%'")
-    return " AND ".join(clauses) if clauses else None
-
-
-def _sync_search_and_format(
-    db,
-    embedding_svc,
-    query: str,
-    target_tech_stack: str = "",
-    target_project_name: str = "",
-    record_type: str = "bug",
-) -> list[types.TextContent] | tuple[list[str], list[dict]]:
-    """ANN search → hybrid rerank → format results into text lines.
-
-    Args:
-        record_type: ``"bug"`` or ``"convention"`` — controls the type filter
-            appended to the WHERE clause and the formatting labels.
-
-    Returns either a ``list[TextContent]`` (early exit for errors / empty)
-    or a ``(lines, results)`` tuple for further processing.
-    """
-    if not query.strip():
-        return [types.TextContent(
-            type="text",
-            text="Query is empty. Please provide an error description.",
-        )]
-
-    if not db.is_ready:
-        return [types.TextContent(
-            type="text",
-            text="BugVault is still initialising. Please try again in a moment.",
-        )]
-
-    # ── embedding + ANN search (use shared EmbeddingService) ───────
-    if embedding_svc is None:
-        from bugvault.services.embedding_svc import EmbeddingService
-        embedding_svc = EmbeddingService()
-
-    rerank_limit = settings.top_k * 4  # expand candidate pool for reranker
-    filter_clause = _build_filter_clause(target_tech_stack, target_project_name)
-    # ── Append record_type filter to isolate bug / convention ─
-    # If the table doesn't have the record_type column (pre-v2 data),
-    # the filter will fail gracefully rather than crashing.
-    type_filter = f"record_type = '{record_type}'"
-    filter_clause = (
-        f"({filter_clause}) AND {type_filter}"
-        if filter_clause else type_filter
-    )
-    query_emb = embedding_svc.generate_embedding(query)
-
-    # ── Primary path: search chunks table ────────────────────────────
-    # Dual recall on bugvault_chunks (Vector + FTS at chunk level)
-    vec_chunks = db.search_chunks(
-        query_emb, filter_clause=filter_clause, limit=rerank_limit,
-    )
-    fts_chunks: list[dict] = []
-    if settings.enable_fts:
-        try:
-            fts_chunks = db.search_chunks_fts(
-                query, filter_clause=filter_clause,
-                limit=rerank_limit,
-            )
-            fts_chunks = [r for r in fts_chunks if r.get("_score", 0) > 0]
-        except Exception:
-            logger.warning("Chunks FTS search failed, falling back to vector-only")
-
-    # ── Chunk-level RRF fusion ──────────────────────────────────────
-    if fts_chunks:
-        logger.info(
-            "Retrieve chunks: vec=%d fts=%d — fusing via RRF(k=60)",
-            len(vec_chunks), len(fts_chunks),
-        )
-        chunk_results = rrf_fusion(vec_chunks, fts_chunks)
-    else:
-        chunk_results = vec_chunks
-
-    # Variables for format section (populated by either path)
-    vec_results: list[dict] = []
-    fts_results: list[dict] = []
-    ce_used = False
-
-    if not chunk_results:
-        # ── Fallback: search parent bug_records via FTS only ────
-        # Vector search disabled because all parent vectors are [0.0]*dim
-        # (zero-vector optimization — they're never used for ANN)
-        logger.info("Chunks empty — fallback to bug_records FTS search")
-        vec_results = []
-        if settings.enable_fts:
-            try:
-                fts_results = db.search_fts(
-                    query, filter_clause=filter_clause,
-                    limit=rerank_limit,
-                )
-                fts_results = [r for r in fts_results if r.get("_score", 0) > 0]
-            except Exception:
-                logger.warning("FTS search failed, falling back to vector-only")
-        if fts_results:
-            results = rrf_fusion(vec_results, fts_results)
-        else:
-            results = vec_results
-    else:
-        # ── Parent-document mapping — group chunks by parent_id ────
-        parent_best: dict[str, dict] = {}
-        for ch in chunk_results:
-            pid = ch.get("parent_id", "") or ""
-            if not pid:
-                continue
-            # Keep the chunk with the best score per parent
-            if pid not in parent_best:
-                parent_best[pid] = ch
-            else:
-                existing = parent_best[pid]
-                prev_score = existing.get("_distance", 1.0) if "_distance" in existing else -existing.get("_rrf_score", 0.0)
-                cur_score = ch.get("_distance", 1.0) if "_distance" in ch else -ch.get("_rrf_score", 0.0)
-                if cur_score < prev_score:  # lower distance OR higher RRF (=less negative) wins
-                    parent_best[pid] = ch
-
-        # ── Fetch full parent records from bug_records ──────────────
-        parent_ids = list(parent_best.keys())
-        parent_records = db.fetch_records_by_ids(parent_ids)
-
-        # Build a lookup: record_id → full record
-        record_map: dict[str, dict] = {}
-        for rec in parent_records:
-            rid = rec.get("record_id", "") or ""
-            if rid:
-                record_map[rid] = rec
-
-        # Merge best chunk's score back onto the full record
-        results = []
-        for pid, best_chunk in parent_best.items():
-            full_rec = record_map.get(pid)
-            if full_rec is None:
-                continue
-            merged = dict(full_rec)  # shallow copy
-            if "_distance" in best_chunk:
-                merged["_distance"] = best_chunk["_distance"]
-            if "_rrf_score" in best_chunk:
-                merged["_rrf_score"] = best_chunk["_rrf_score"]
-            results.append(merged)
-
-        # Populate source count variables for format section
-        vec_results = vec_chunks
-        fts_results = fts_chunks
-
-        if not results:
-            logger.info("Chunks found but no matching parent records in bug_records")
-            return [types.TextContent(
-                type="text",
-                text="No matching bug experiences found in the knowledge base.",
-            )]
-
-    if not results:
-        logger.info("Retrieve: no results for query '%s'", query[:80])
+    if result.error_message:
+        return [types.TextContent(type="text", text=result.error_message)]
+    if not result.records and not result.had_candidates:
         return [types.TextContent(
             type="text",
             text="No matching bug experiences found in the knowledge base.",
         )]
 
-    logger.info(
-        "Retrieve: %d raw results for query '%s'",
-        len(results), query[:80],
-    )
+    lines = _format_retrieval_result(result, "convention")
+    return [types.TextContent(type="text", text="\n".join(lines))]
 
-    # ── rerank (semantic threshold / RRF score + time decay) ───────
-    pre_count = len(results)
-    results = rerank(results, None)
-    after_count = len(results)
-    if after_count < pre_count:
-        logger.info(
-            "Retrieve: rerank dropped %d docs (%d → %d)",
-            pre_count - after_count, pre_count, after_count,
-        )
 
-    # ── Cross-Encoder reranking (optional, lazy-loaded) ──────────
-    if settings.enable_reranker and results:
-        try:
-            from bugvault.services.reranker_svc import get_reranker
-            reranker = get_reranker()
-            if reranker is not None:
-                results = reranker.rerank(query, results)
-                ce_used = True
-                logger.info("Cross-Encoder reranked %d candidates", len(results))
-        except Exception:
-            logger.warning("Cross-Encoder reranking failed — using RRF order")
+async def _retrieve_records(
+    loop,
+    executor,
+    db,
+    embedding_svc,
+    request: RetrievalRequest,
+):
+    """Run the domain retrieval module away from the MCP event loop."""
+    retrieval = RetrievalModule(db, embedding_svc)
+    return await loop.run_in_executor(executor, retrieval.retrieve, request)
 
-    # ── Truncate to final top_k ─────────────────────────────────
-    results = results[:settings.top_k]
 
-    # ── format results into text lines ─────────────────────────────
-    lines: list[str] = []
-    lines.append("--- Retrieval Info ---")
-    if ce_used:
-        lines.append("Strategy: hybrid + Cross-Encoder reranking")
-    elif fts_results:
-        lines.append("Strategy: hybrid (vector + FTS + RRF fusion)")
-    else:
-        lines.append("Strategy: vector-only")
+def _format_retrieval_result(result, record_type: str) -> list[str]:
+    """Present domain records using the existing MCP text contract."""
+    lines = ["--- Retrieval Info ---"]
+    lines.append(f"Strategy: {result.strategy}")
     lines.append(
-        f"Sources:  {len(vec_results)} vector + {len(fts_results)} FTS"
-        if fts_results else f"Sources:  {len(vec_results)} vector results"
+        f"Sources:  {result.vector_count} vector + {result.fts_count} FTS"
+        if result.fts_count else f"Sources:  {result.vector_count} vector results"
     )
     lines.append("")
+
     is_convention = record_type == "convention"
     error_label = "Context:" if is_convention else "Error:"
     tried_label = "Incorrect:" if is_convention else "Tried:"
     solution_label = "Correct:" if is_convention else "Solution:"
-
-    for i, row in enumerate(results, 1):
-        lines.append(f"--- Result {i} ---")
+    for index, row in enumerate(result.records, 1):
+        lines.append(f"--- Result {index} ---")
         lines.append(f"Title:    {row.get('bug_title', '(untitled)')}")
         lines.append(f"Scope:    {row.get('project_name', '(any)')}")
         lines.append(f"Time:     {row.get('create_time', '(unknown)')}")
@@ -981,12 +772,9 @@ def _sync_search_and_format(
             f"{solution_label}\n{row.get('final_solution', '')[:settings.max_record_chars]}"
         )
         if row.get("root_cause"):
-            lines.append(
-                f"Note:\n{row['root_cause'][:settings.max_record_chars]}"
-            )
+            lines.append(f"Note:\n{row['root_cause'][:settings.max_record_chars]}")
         lines.append("")
-
-    return lines, results
+    return lines
 
 
 def _compute_suggested_action(eval_result) -> str:

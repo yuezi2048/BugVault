@@ -386,54 +386,54 @@ class TestRAGEvaluatorFacade:
 # ===================================================================
 
 class TestMetadataFilter:
-    """Test _sanitise_filter_value and _build_filter_clause."""
+    """Test Retrieval module filter helpers."""
 
-    # ── _sanitise_filter_value ───────────────────────────────────
+    # ── sanitise_filter_value ────────────────────────────────────
 
     def test_sanitise_keeps_valid_chars(self):
-        from bugvault.mcp_tools.tools import _sanitise_filter_value
+        from bugvault.services.retrieval_svc import sanitise_filter_value
 
-        assert _sanitise_filter_value("Python 3.13") == "Python 3.13"
-        assert _sanitise_filter_value("my-project_v2") == "my-project_v2"
+        assert sanitise_filter_value("Python 3.13") == "Python 3.13"
+        assert sanitise_filter_value("my-project_v2") == "my-project_v2"
 
     def test_sanitise_strips_sql_syntax(self):
-        from bugvault.mcp_tools.tools import _sanitise_filter_value
+        from bugvault.services.retrieval_svc import sanitise_filter_value
 
         # Semi-colons and quotes stripped; English words (DROP, TABLE) harmless
-        result = _sanitise_filter_value("Python'; DROP TABLE; --")
+        result = sanitise_filter_value("Python'; DROP TABLE; --")
         assert "'" not in result, f"quotes should be stripped: {result}"
         assert ";" not in result, f"semicolons should be stripped: {result}"
         # Only alnum, space, underscore, hyphen, dot survive
         assert result == "Python DROP TABLE --"
 
     def test_sanitise_empty_returns_empty(self):
-        from bugvault.mcp_tools.tools import _sanitise_filter_value
+        from bugvault.services.retrieval_svc import sanitise_filter_value
 
-        assert _sanitise_filter_value("") == ""
-        assert _sanitise_filter_value("   ") == ""
+        assert sanitise_filter_value("") == ""
+        assert sanitise_filter_value("   ") == ""
 
-    # ── _build_filter_clause ─────────────────────────────────────
+    # ── build_filter_clause ──────────────────────────────────────
 
     def test_filter_tech_stack_only(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
-        clause = _build_filter_clause("Python", "")
+        clause = build_filter_clause("Python", "")
         assert clause is not None
         assert "LOWER(tech_stack)" in clause
         assert "python" in clause
 
     def test_filter_project_only(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
-        clause = _build_filter_clause("", "order-svc")
+        clause = build_filter_clause("", "order-svc")
         assert clause is not None
         assert "LOWER(project_name)" in clause
         assert "order-svc" in clause
 
     def test_filter_both_fields(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
-        clause = _build_filter_clause("Go", "api-gateway")
+        clause = build_filter_clause("Go", "api-gateway")
         assert clause is not None
         assert "AND" in clause
         assert "LOWER(tech_stack)" in clause
@@ -442,24 +442,24 @@ class TestMetadataFilter:
         assert "api-gateway" in clause
 
     def test_filter_both_empty_returns_none(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
-        clause = _build_filter_clause("", "")
+        clause = build_filter_clause("", "")
         assert clause is None
 
     def test_filter_case_insensitive(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
         # Upper-case input should produce lower-cased LIKE value
-        clause = _build_filter_clause("PYTHON", "MY-PROJECT")
+        clause = build_filter_clause("PYTHON", "MY-PROJECT")
         assert clause is not None
         assert "LOWER(tech_stack) LIKE '%python%'" in clause
         assert "LOWER(project_name) LIKE '%my-project%'" in clause
 
     def test_filter_injection_attempt_sanitised(self):
-        from bugvault.mcp_tools.tools import _build_filter_clause
+        from bugvault.services.retrieval_svc import build_filter_clause
 
-        clause = _build_filter_clause(
+        clause = build_filter_clause(
             "Python'; DROP TABLE bug_records; --",
             "project' OR '1'='1",
         )

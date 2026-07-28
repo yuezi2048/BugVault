@@ -374,39 +374,39 @@ class TestTechStackFiltering:
     """Metadata filter with compound tech_stack values (comma-separated)."""
 
     def test_sanitise_keeps_spaces_and_alphanumeric(self):
-        """_sanitise_filter_value keeps spaces, alphanumeric, hyphens."""
-        from bugvault.mcp_tools.tools import _sanitise_filter_value
+        """sanitise_filter_value keeps spaces, alphanumeric, hyphens."""
+        from bugvault.services.retrieval_svc import sanitise_filter_value
         # Commas are NOT in the allowlist — they get stripped
-        assert _sanitise_filter_value("Python FastAPI") == "Python FastAPI"
-        assert _sanitise_filter_value("Java 17 Spring Boot") == "Java 17 Spring Boot"
-        assert _sanitise_filter_value("C++") == "C"
+        assert sanitise_filter_value("Python FastAPI") == "Python FastAPI"
+        assert sanitise_filter_value("Java 17 Spring Boot") == "Java 17 Spring Boot"
+        assert sanitise_filter_value("C++") == "C"
 
     def test_sanitise_strips_dangerous_chars(self):
-        """_sanitise_filter_value strips SQL injection characters."""
-        from bugvault.mcp_tools.tools import _sanitise_filter_value
-        assert _sanitise_filter_value("Python'; DROP TABLE") == "Python DROP TABLE"
+        """sanitise_filter_value strips SQL injection characters."""
+        from bugvault.services.retrieval_svc import sanitise_filter_value
+        assert sanitise_filter_value("Python'; DROP TABLE") == "Python DROP TABLE"
 
     def test_filter_clause_with_compound_tech_stack(self):
-        """_build_filter_clause handles multi-word tech_stack."""
-        from bugvault.mcp_tools.tools import _build_filter_clause
-        clause = _build_filter_clause("Python FastAPI", "")
+        """build_filter_clause handles multi-word tech_stack."""
+        from bugvault.services.retrieval_svc import build_filter_clause
+        clause = build_filter_clause("Python FastAPI", "")
         assert clause is not None
         assert "LIKE '%python fastapi%'" in clause
 
     def test_filter_clause_both_fields(self):
-        """_build_filter_clause combines tech_stack AND project_name."""
-        from bugvault.mcp_tools.tools import _build_filter_clause
-        clause = _build_filter_clause("Python", "user-service")
+        """build_filter_clause combines tech_stack AND project_name."""
+        from bugvault.services.retrieval_svc import build_filter_clause
+        clause = build_filter_clause("Python", "user-service")
         assert clause is not None
         assert "LOWER(tech_stack) LIKE '%python%'" in clause
         assert "LOWER(project_name) LIKE '%user-service%'" in clause
         assert "AND" in clause
 
     def test_filter_clause_empty_returns_none(self):
-        """_build_filter_clause returns None when both args are empty."""
-        from bugvault.mcp_tools.tools import _build_filter_clause
-        assert _build_filter_clause("", "") is None
-        assert _build_filter_clause("", "  ") is None
+        """build_filter_clause returns None when both args are empty."""
+        from bugvault.services.retrieval_svc import build_filter_clause
+        assert build_filter_clause("", "") is None
+        assert build_filter_clause("", "  ") is None
 
 
 # ═══════════════════════════════════════════════════════════════════

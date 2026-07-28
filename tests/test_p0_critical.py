@@ -4,7 +4,7 @@ These tests address the three P0 coverage gaps identified in the v1.1.1
 test report (docs/tests/v1.1.1-test-report.md):
 
   TC-01: Cross-Encoder reranker correctness and fallback
-  TC-02: _sync_search_and_format pipeline (chunks + fallback)
+  TC-02: Retrieval module pipeline (chunks + fallback)
   TC-03: Backward compatibility (no chunks → FTS-only fallback)
 
 All tests use an isolated temp directory so existing sample data
@@ -221,7 +221,7 @@ class TestCrossEncoder:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  TC-02: _sync_search_and_format Pipeline
+#  TC-02: Retrieval Module Pipeline
 # ═══════════════════════════════════════════════════════════════════
 
 

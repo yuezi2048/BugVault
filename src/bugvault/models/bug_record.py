@@ -120,6 +120,26 @@ class BugRecord(BaseModel):
             parts.append(self.root_cause)
         return "\n".join(parts)
 
+    @classmethod
+    def from_table_row(cls, row: dict) -> "BugRecord":
+        """Build a BugRecord from a shared ``bug_records`` table row.
+
+        This is the inverse of the Bug Record storage projection.  Keeping the
+        mapping beside the domain model prevents storage column names from
+        escaping through Retrieval's interface.
+        """
+        return cls(
+            bug_title=row.get("bug_title", ""),
+            error_log_snippet=row.get("error_log_snippet", ""),
+            tried_methods=row.get("tried_methods", ""),
+            final_solution=row.get("final_solution", ""),
+            project_name=row.get("project_name") or None,
+            tech_stack=row.get("tech_stack") or None,
+            root_cause=row.get("root_cause") or None,
+            record_id=row.get("record_id", ""),
+            create_time=row.get("create_time", ""),
+        )
+
     CHUNK_MAX_SIZE: int = 800  # max chars per chunk before recursive split
 
     def to_chunks(self, max_size: int | None = None) -> list[dict]:

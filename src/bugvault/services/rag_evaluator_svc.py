@@ -50,15 +50,34 @@ class RAGEvalStrategy(Protocol):
 # ═══════════════════════════════════════════════════════════════════
 
 
-def format_context(results: list[dict], top_k: int) -> str:
+def format_context(results: list[object], top_k: int) -> str:
     """Format top-k results into a text block for LLM evaluation."""
+    from bugvault.models.bug_record import BugRecord
+    from bugvault.models.convention_record import ConventionRecord
+
     parts: list[str] = []
-    for i, row in enumerate(results[:top_k], 1):
+    for i, record in enumerate(results[:top_k], 1):
+        if isinstance(record, ConventionRecord):
+            title = record.convention_name
+            context = record.trigger_context
+            solution = record.correct_behavior
+        elif isinstance(record, BugRecord):
+            title = record.bug_title
+            context = record.error_log_snippet
+            solution = record.final_solution
+        else:
+            # Compatibility for direct evaluator callers outside Retrieval.
+            row = record
+            if not isinstance(row, dict):
+                continue
+            title = row.get("bug_title", "")
+            context = row.get("error_log_snippet", "")
+            solution = row.get("final_solution", "")
         parts.append(
             f"Document {i}:\n"
-            f"Title: {row.get('bug_title', '')}\n"
-            f"Error: {row.get('error_log_snippet', '')[:500]}\n"
-            f"Solution: {row.get('final_solution', '')[:500]}"
+            f"Title: {title}\n"
+            f"Error: {context[:500]}\n"
+            f"Solution: {solution[:500]}"
         )
     return "\n\n".join(parts)
 

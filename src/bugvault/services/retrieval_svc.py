@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal, TypeAlias
 
 from bugvault.config import settings
+from bugvault.models.bug_record import BugRecord
+from bugvault.models.convention_record import ConventionRecord
 from bugvault.utils.logger import logger
+
+
+Record: TypeAlias = BugRecord | ConventionRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,14 +22,14 @@ class RetrievalRequest:
     query: str
     target_tech_stack: str = ""
     target_project_name: str = ""
-    record_type: str = "bug"
+    record_type: Literal["bug", "convention"] = "bug"
 
 
 @dataclass(slots=True)
 class RetrievalResult:
     """Ranked records and execution metadata owned by the retrieval module."""
 
-    records: list[dict] = field(default_factory=list)
+    records: list[Record] = field(default_factory=list)
     vector_count: int = 0
     fts_count: int = 0
     used_cross_encoder: bool = False
@@ -104,12 +109,34 @@ class RetrievalModule:
                 logger.warning("Cross-Encoder reranking failed — using RRF order")
 
         return RetrievalResult(
-            records=ranked[:settings.top_k],
+            records=self._to_records(ranked[:settings.top_k], request.record_type),
             vector_count=vector_count,
             fts_count=fts_count,
             used_cross_encoder=used_cross_encoder,
             had_candidates=True,
         )
+
+    def _to_records(
+        self,
+        rows: list[dict],
+        record_type: Literal["bug", "convention"],
+    ) -> list[Record]:
+        """Hide shared-table aliases after ranking has completed."""
+        factory = (
+            ConventionRecord.from_table_row
+            if record_type == "convention"
+            else BugRecord.from_table_row
+        )
+        records: list[Record] = []
+        for row in rows:
+            if row.get("record_type", "bug") != record_type:
+                logger.warning("Skipping mismatched %s retrieval row", record_type)
+                continue
+            try:
+                records.append(factory(row))
+            except Exception:
+                logger.exception("Cannot map retrieved %s row to a domain record", record_type)
+        return records
 
     def _collect_records(
         self,

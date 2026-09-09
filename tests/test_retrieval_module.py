@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from bugvault.config import settings
+from bugvault.models.bug_record import BugRecord
+from bugvault.models.convention_record import ConventionRecord
 from bugvault.services.retrieval_svc import (
     RetrievalModule,
     RetrievalRequest,
@@ -46,6 +48,18 @@ class FakeDatabase:
         return [row for row in self.parents if row["record_id"] in record_ids]
 
 
+def _bug_row(record_id: str, title: str) -> dict:
+    return {
+        "record_id": record_id,
+        "record_type": "bug",
+        "bug_title": title,
+        "error_log_snippet": "TimeoutError",
+        "tried_methods": "Restarted the worker",
+        "final_solution": "Increase the timeout",
+        "create_time": "2026-01-01T00:00:00+00:00",
+    }
+
+
 @pytest.fixture
 def disable_optional_reranker():
     old_reranker = settings.enable_reranker
@@ -66,8 +80,8 @@ def test_retrieval_module_maps_chunks_to_ranked_parent_records(disable_optional_
             {"parent_id": "second", "_distance": 0.1},
         ],
         parents=[
-            {"record_id": "first", "bug_title": "First", "create_time": ""},
-            {"record_id": "second", "bug_title": "Second", "create_time": ""},
+            _bug_row("first", "First"),
+            _bug_row("second", "Second"),
         ],
     )
 
@@ -76,7 +90,8 @@ def test_retrieval_module_maps_chunks_to_ranked_parent_records(disable_optional_
     )
 
     assert result.error_message is None
-    assert [record["record_id"] for record in result.records] == ["second", "first"]
+    assert [record.bug_title for record in result.records] == ["Second", "First"]
+    assert all(isinstance(record, BugRecord) for record in result.records)
     assert result.vector_count == 2
     assert result.fts_count == 0
     assert result.strategy == "vector-only"
@@ -121,8 +136,8 @@ def test_retrieval_module_uses_cross_encoder_adapter_when_enabled(monkeypatch):
             {"parent_id": "second", "_distance": 0.2},
         ],
         parents=[
-            {"record_id": "first", "bug_title": "First", "create_time": ""},
-            {"record_id": "second", "bug_title": "Second", "create_time": ""},
+            _bug_row("first", "First"),
+            _bug_row("second", "Second"),
         ],
     )
     monkeypatch.setattr(settings, "enable_reranker", True)
@@ -136,7 +151,33 @@ def test_retrieval_module_uses_cross_encoder_adapter_when_enabled(monkeypatch):
 
     assert result.used_cross_encoder is True
     assert result.strategy == "hybrid + Cross-Encoder reranking"
-    assert [record["record_id"] for record in result.records] == ["second", "first"]
+    assert [record.bug_title for record in result.records] == ["Second", "First"]
+
+
+def test_retrieval_module_returns_convention_records(disable_optional_reranker):
+    database = FakeDatabase(
+        chunks=[{"parent_id": "rule", "_distance": 0.1}],
+        parents=[{
+            "record_id": "rule",
+            "record_type": "convention",
+            "bug_title": "Return DTOs",
+            "error_log_snippet": "When returning repository data",
+            "tried_methods": "Return entities directly",
+            "final_solution": "Map entities to DTOs",
+            "project_name": "src/repository/",
+            "tech_stack": "Python",
+            "create_time": "2026-01-01T00:00:00+00:00",
+        }],
+    )
+
+    result = RetrievalModule(database, FakeEmbedding()).retrieve(
+        RetrievalRequest("repository return type", record_type="convention"),
+    )
+
+    assert len(result.records) == 1
+    assert isinstance(result.records[0], ConventionRecord)
+    assert result.records[0].scope == "src/repository/"
+    assert result.records[0].correct_behavior == "Map entities to DTOs"
 
 
 def test_filter_clause_is_owned_by_the_retrieval_module():

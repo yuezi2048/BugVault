@@ -229,3 +229,149 @@ def write_convention_archive(record: ConventionRecord) -> Path:
     content = convention_to_markdown(record)
     out_path.write_text(content, encoding="utf-8")
     return out_path
+
+
+# ===================================================================
+#  Archive reader
+# ===================================================================
+
+ArchiveRecord = BugRecord | ConventionRecord
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+_TITLE_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+_SECTION_RE = re.compile(r"^##\s+(.+?)$\n(.*?)(?=^##|\Z)", re.MULTILINE | re.DOTALL)
+
+
+def read_archive_record(path: str | Path) -> ArchiveRecord | None:
+    """Read one Archive file into its complete typed domain record.
+
+    Missing ``type`` frontmatter remains a Bug Record for compatibility with
+    existing archives.  Invalid files return ``None`` so maintenance can keep
+    rebuilding the remaining Index projections.
+    """
+    archive_path = Path(path)
+    try:
+        text = archive_path.read_text(encoding="utf-8")
+    except Exception:
+        from bugvault.utils.logger import logger
+
+        logger.exception("Cannot read %s", archive_path)
+        return None
+
+    frontmatter, body = _split_archive_document(text, archive_path)
+    record_type = frontmatter.get("type", "bug")
+    if record_type == "convention":
+        return _read_convention_record(frontmatter, body, archive_path)
+    if record_type != "bug":
+        from bugvault.utils.logger import logger
+
+        logger.warning("Unsupported archive record type %r in %s", record_type, archive_path.name)
+        return None
+    return _read_bug_record(frontmatter, body, archive_path)
+
+
+def _split_archive_document(text: str, path: Path) -> tuple[dict, str]:
+    match = _FRONTMATTER_RE.search(text)
+    if not match:
+        return {}, text
+    try:
+        return _parse_frontmatter(match.group(1)), text[match.end():]
+    except Exception:
+        from bugvault.utils.logger import logger
+
+        logger.warning("YAML parse warning for %s (will use defaults)", path.name)
+        return {}, text[match.end():]
+
+
+def _parse_frontmatter(text: str) -> dict:
+    """Parse the Archive's small YAML subset without a runtime dependency."""
+    frontmatter: dict[str, object] = {}
+    current_list: list[str] | None = None
+    for line in text.splitlines():
+        if line.startswith("  - ") and current_list is not None:
+            current_list.append(line[4:].strip())
+            continue
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if value:
+            frontmatter[key] = value.strip('"')
+            current_list = None
+        else:
+            current_list = []
+            frontmatter[key] = current_list
+    return frontmatter
+
+
+def _archive_title(body: str, path: Path, prefix: str = "") -> str:
+    match = _TITLE_RE.search(body)
+    title = match.group(1).strip() if match else ""
+    if prefix:
+        title = re.sub(rf"^{re.escape(prefix)}\s*", "", title, flags=re.IGNORECASE).strip()
+    return title or path.stem.replace("_", " ")
+
+
+def _archive_sections(body: str) -> dict[str, str]:
+    return {
+        match.group(1).strip(): match.group(2).strip()
+        for match in _SECTION_RE.finditer(body)
+    }
+
+
+def _section(sections: dict[str, str], *aliases: str) -> str:
+    return next((sections[alias] for alias in aliases if alias in sections), "")
+
+
+def _archive_tags(frontmatter: dict) -> str:
+    tags = frontmatter.get("tags", [])
+    if isinstance(tags, list):
+        return ", ".join(str(tag) for tag in tags if tag)
+    return tags if isinstance(tags, str) else ""
+
+
+def _read_bug_record(frontmatter: dict, body: str, path: Path) -> BugRecord | None:
+    sections = _archive_sections(body)
+    try:
+        return BugRecord(
+            bug_title=_archive_title(body, path) or "(untitled)",
+            error_log_snippet=re.sub(
+                r"^```[a-zA-Z]*\n|```$", "",
+                _section(sections, "报错信息", "Error", "错误信息").strip(),
+            ) or "(no error log)",
+            tried_methods=_section(sections, "尝试过的方法", "Tried", "尝试的方法") or "(empty)",
+            final_solution=_section(sections, "最终解决方案", "Solution", "解决方案") or "(empty)",
+            project_name=str(frontmatter.get("project", "")) or None,
+            tech_stack=_archive_tags(frontmatter) or None,
+            root_cause=_section(sections, "根因分析", "Root Cause", "根因") or None,
+            create_time=str(frontmatter.get("date", "")),
+        )
+    except Exception:
+        from bugvault.utils.logger import logger
+
+        logger.exception("BugRecord validation failed for %s", path.name)
+        return None
+
+
+def _read_convention_record(frontmatter: dict, body: str, path: Path) -> ConventionRecord | None:
+    sections = _archive_sections(body)
+    try:
+        return ConventionRecord(
+            convention_name=_archive_title(body, path, "Rule:") or "(untitled)",
+            trigger_context=_section(sections, "触发场景", "Trigger Context") or "(no context)",
+            incorrect_behavior=_section(
+                sections, "错误行为（不要做）", "错误行为", "Incorrect Behavior"
+            ) or "(empty)",
+            correct_behavior=_section(
+                sections, "正确行为（应该做）", "正确行为", "Correct Behavior"
+            ) or "(empty)",
+            scope=str(frontmatter.get("scope", "")) or None,
+            tags=_archive_tags(frontmatter) or None,
+            create_time=str(frontmatter.get("date", "")),
+        )
+    except Exception:
+        from bugvault.utils.logger import logger
+
+        logger.exception("ConventionRecord validation failed for %s", path.name)
+        return None

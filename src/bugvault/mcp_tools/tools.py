@@ -5,7 +5,9 @@ Registration
     server = Server(settings.server_name)
     db = LanceDBClient()
     executor = ThreadPoolExecutor(...)
-    register_tools(server, db, embedding_svc, reflection_svc, rag_evaluator, executor)
+    register_tools(
+        server, db, embedding_svc, reflection_svc, rag_evaluator, graph_db, executor,
+    )
 
 This module owns the schema / metadata for each tool and delegates all
 business logic to the ``services`` layer.  The ``database`` layer is
@@ -21,10 +23,7 @@ from mcp.server import Server
 import mcp.types as types
 
 from bugvault.config import settings
-from bugvault.models.bug_record import BugRecord
-from bugvault.models.convention_record import ConventionRecord
-from bugvault.services.archive_svc import write_convention_archive, write_markdown_archive
-from bugvault.services.ingestion_svc import validate_and_prepare, validate_convention_record
+from bugvault.services.persistence_svc import PreparedRecord, RecordPersistence
 from bugvault.services.retrieval_svc import RetrievalModule, RetrievalRequest
 from bugvault.utils.logger import logger, set_trace_id
 
@@ -223,7 +222,7 @@ def register_tools(
     rag_evaluator : RAGEvaluator | None
         Optional — required for RAG evaluation on retrieval.
     graph_db : GraphDB | None
-        Optional graph overlay, reserved for graph-backed tool operations.
+        Optional graph overlay projected after successful LanceDB writes.
     executor : ThreadPoolExecutor | None
         Shared thread pool; created internally if not provided.
     """
@@ -331,12 +330,24 @@ def register_tools(
                     arguments,
                 )
             elif name == "save_bug_experience":
-                result = await _handle_save(
-                    loop, executor, db, embedding_svc, arguments,
+                result = await _handle_save_record(
+                    loop,
+                    executor,
+                    db,
+                    embedding_svc,
+                    graph_db,
+                    arguments,
+                    "bug",
                 )
             elif name == "save_convention":
-                result = await _handle_save_convention(
-                    loop, executor, db, embedding_svc, arguments,
+                result = await _handle_save_record(
+                    loop,
+                    executor,
+                    db,
+                    embedding_svc,
+                    graph_db,
+                    arguments,
+                    "convention",
                 )
             elif name == "retrieve_convention":
                 result = await _handle_retrieve_convention(
@@ -406,221 +417,96 @@ def register_tools(
 # ===================================================================
 
 
-async def _handle_save(loop, executor, db, embedding_svc, arguments):
-    """Synchronous validate + archive, then fire-and-forget async embedding."""
-    # ── SYNC PATH (in executor) ──────────────────────────────────────
-    texts, record = await loop.run_in_executor(
-        executor,
-        _sync_save_validate,  # returns (list[TextContent], BugRecord | None)
-        arguments,
-    )
-
-    # If validation failed, record is None and texts contain the error
-    if record is None:
-        return texts
-
-    # ── ASYNC HOOK (fire-and-forget) ────────────────────────────────
-    if settings.enable_async_embedding and embedding_svc is not None:
-        search_text = record.to_search_text()
-        chunk_defs = record.to_chunks()
-        table_row = {
-            "record_id": record.record_id or "",
-            "bug_title": record.bug_title,
-            "error_log_snippet": record.error_log_snippet,
-            "tried_methods": record.tried_methods,
-            "final_solution": record.final_solution,
-            "project_name": record.project_name or "",
-            "tech_stack": record.tech_stack or "",
-            "root_cause": record.root_cause or "",
-            "create_time": record.create_time,
-            "search_text": search_text,
-            "record_type": "bug",
-        }
-        asyncio.ensure_future(
-            _async_embed_and_store(
-                loop, executor, db, embedding_svc,
-                table_row, chunk_defs,
-            ),
-        )
-
-    return texts
-
-
-def _sync_save_validate(
+async def _handle_save_record(
+    loop,
+    executor,
+    db,
+    embedding_svc,
+    graph_db,
     arguments: dict,
-) -> tuple[list[types.TextContent], BugRecord | None]:
-    """Pydantic-validate, check required fields, write Markdown archive.
-
-    Returns ``(TextContent list, BugRecord)`` on success, or
-    ``(TextContent list, None)`` on validation failure.
-    """
-    try:
-        record = BugRecord(**arguments)
-    except Exception as exc:
-        return (
-            [types.TextContent(type="text", text=f"Invalid record: {exc}")],
-            None,
-        )
-
-    missing = validate_and_prepare(record)
-    if missing:
-        return (
-            [types.TextContent(
-                type="text",
-                text=(
-                    f"Record saved as draft. Missing fields: "
-                    f"{', '.join(missing)}. "
-                    f"You can update the record later."
-                ),
-            )],
-            record,
-        )
-
-    # ── Markdown archive (fast, sync I/O) ────────────────────────
-    try:
-        write_markdown_archive(record)
-    except Exception:
-        logger.exception("Failed to write markdown archive (non-fatal)")
-
-    return (
-        [types.TextContent(
-            type="text",
-            text=(
-                f"Bug record '{record.bug_title}' saved successfully. "
-                f"I can now retrieve it in future troubleshooting sessions."
-            ),
-        )],
-        record,
+    record_type: str,
+) -> list[types.TextContent]:
+    """Prepare a record now and schedule its local-memory persistence."""
+    persistence = RecordPersistence(
+        db=db,
+        embedding_svc=embedding_svc,
+        graph_db=graph_db,
     )
-
-
-# ===================================================================
-#  Save Convention — same zero-blocking async flow
-# ===================================================================
-
-
-async def _handle_save_convention(loop, executor, db, embedding_svc, arguments):
-    """Synchronous validate + archive, then fire-and-forget async embedding."""
-    texts, record = await loop.run_in_executor(
-        executor,
-        _sync_save_convention_validate,
-        arguments,
+    prepare = (
+        persistence.prepare_convention
+        if record_type == "convention"
+        else persistence.prepare_bug
     )
+    prepared = await loop.run_in_executor(executor, prepare, arguments)
 
-    if record is None:
-        return texts
-
-    # ── ASYNC HOOK (fire-and-forget) ────────────────────────────────
-    if settings.enable_async_embedding and embedding_svc is not None:
-        search_text = record.to_search_text()
-        chunk_defs = record.to_chunks()
-        table_row = record.to_table_row()
-        table_row["search_text"] = search_text
-        asyncio.ensure_future(
-            _async_embed_and_store(
-                loop, executor, db, embedding_svc,
-                table_row, chunk_defs,
+    if (
+        prepared.record is not None
+        and settings.enable_async_embedding
+        and embedding_svc is not None
+    ):
+        asyncio.create_task(
+            _persist_record_in_background(
+                loop,
+                executor,
+                persistence,
+                prepared.record,
             ),
         )
 
-    return texts
+    return _present_save_outcome(prepared)
 
 
-def _sync_save_convention_validate(
-    arguments: dict,
-) -> tuple[list[types.TextContent], ConventionRecord | None]:
-    """Pydantic-validate, check required fields, write Markdown archive.
-
-    Returns ``(TextContent list, ConventionRecord)`` on success, or
-    ``(TextContent list, None)`` on validation failure.
-    """
+async def _persist_record_in_background(loop, executor, persistence, record) -> None:
+    """Keep failed background persistence non-fatal to the MCP caller."""
     try:
-        record = ConventionRecord(**arguments)
-    except Exception as exc:
-        return (
-            [types.TextContent(type="text", text=f"Invalid convention: {exc}")],
-            None,
-        )
-
-    missing = validate_convention_record(record)
-    if missing:
-        return (
-            [types.TextContent(
-                type="text",
-                text=(
-                    f"Convention saved as draft. Missing fields: "
-                    f"{', '.join(missing)}. "
-                    f"You can update the record later."
-                ),
-            )],
-            record,
-        )
-
-    # ── Markdown archive (fast, sync I/O) ────────────────────────
-    try:
-        write_convention_archive(record)
-    except Exception:
-        logger.exception("Failed to write convention archive (non-fatal)")
-
-    return (
-        [types.TextContent(
-            type="text",
-            text=(
-                f"Convention '{record.convention_name}' saved successfully. "
-                f"I will remember this rule for future sessions."
-            ),
-        )],
-        record,
-    )
-
-
-async def _async_embed_and_store(loop, executor, db, embedding_svc, table_row: dict, chunk_defs: list[dict]):
-    """Background task: generate embedding + LanceDB upsert.
-
-    Generic version that works for both BugRecord and ConventionRecord.
-
-    Args:
-        table_row: Pre-built dict matching bug_records table columns (incl. vector).
-        chunk_defs: Pre-built chunk dicts with search_text, tech_stack, etc.
-
-    Never awaited by the caller — runs as a fire-and-forget coroutine.
-    Failures are logged but do not propagate to the client.
-    """
-    try:
-        search_text = table_row["search_text"]
-
-        def _work():
-            # ── 1. Embed and upsert the full parent record ────────
-            full_emb = embedding_svc.generate_embedding(search_text)
-            table_row["vector"] = full_emb
-            db.upsert_record(table_row)
-
-            # ── 2. Embed and upsert each chunk ────────────────────
-            chunk_rows: list[dict] = []
-            for cd in chunk_defs:
-                chunk_emb = embedding_svc.generate_embedding(cd["search_text"])
-                chunk_rows.append({
-                    "vector": chunk_emb,
-                    "chunk_id": cd["chunk_id"],
-                    "parent_id": cd["parent_id"],
-                    "chunk_type": cd["chunk_type"],
-                    "search_text": cd["search_text"],
-                    "tech_stack": cd.get("tech_stack", ""),
-                    "project_name": cd.get("project_name", ""),
-                    "record_type": cd.get("record_type", "bug"),
-                })
-            db.upsert_chunks(chunk_rows)
-
-        await loop.run_in_executor(executor, _work)
-        logger.info(
-            "Async embedding + storage completed: %s",
-            table_row.get("bug_title", table_row.get("record_id", "?")),
-        )
+        await loop.run_in_executor(executor, persistence.persist, record)
     except Exception:
         logger.exception(
-            "Async embedding + storage failed: %s",
-            table_row.get("bug_title", table_row.get("record_id", "?")),
+            "Async record persistence failed: %s",
+            getattr(record, "record_id", "?"),
         )
+
+
+def _present_save_outcome(prepared: PreparedRecord) -> list[types.TextContent]:
+    """Translate a persistence outcome into the stable MCP text contract."""
+    if prepared.record is None:
+        prefix = (
+            "Invalid convention"
+            if prepared.record_type == "convention"
+            else "Invalid record"
+        )
+        return [types.TextContent(
+            type="text",
+            text=f"{prefix}: {prepared.validation_error}",
+        )]
+
+    if prepared.is_draft:
+        prefix = "Convention" if prepared.record_type == "convention" else "Record"
+        return [types.TextContent(
+            type="text",
+            text=(
+                f"{prefix} saved as draft. Missing fields: "
+                f"{', '.join(prepared.missing_fields)}. "
+                f"You can update the record later."
+            ),
+        )]
+
+    if prepared.record_type == "convention":
+        return [types.TextContent(
+            type="text",
+            text=(
+                f"Convention '{prepared.record.convention_name}' saved successfully. "
+                f"I will remember this rule for future sessions."
+            ),
+        )]
+
+    return [types.TextContent(
+        type="text",
+        text=(
+            f"Bug record '{prepared.record.bug_title}' saved successfully. "
+            f"I can now retrieve it in future troubleshooting sessions."
+        ),
+    )]
 
 
 # ===================================================================
@@ -757,22 +643,34 @@ def _format_retrieval_result(result, record_type: str) -> list[str]:
     error_label = "Context:" if is_convention else "Error:"
     tried_label = "Incorrect:" if is_convention else "Tried:"
     solution_label = "Correct:" if is_convention else "Solution:"
-    for index, row in enumerate(result.records, 1):
+    for index, record in enumerate(result.records, 1):
         lines.append(f"--- Result {index} ---")
-        lines.append(f"Title:    {row.get('bug_title', '(untitled)')}")
-        lines.append(f"Scope:    {row.get('project_name', '(any)')}")
-        lines.append(f"Time:     {row.get('create_time', '(unknown)')}")
+        if is_convention:
+            title = record.convention_name
+            scope = record.scope or "(any)"
+            context = record.trigger_context
+            incorrect = record.incorrect_behavior
+            correct = record.correct_behavior
+        else:
+            title = record.bug_title
+            scope = record.project_name or "(any)"
+            context = record.error_log_snippet
+            incorrect = record.tried_methods
+            correct = record.final_solution
+        lines.append(f"Title:    {title}")
+        lines.append(f"Scope:    {scope}")
+        lines.append(f"Time:     {record.create_time or '(unknown)'}")
         lines.append(
-            f"{error_label}\n{row.get('error_log_snippet', '')[:settings.max_record_chars]}"
+            f"{error_label}\n{context[:settings.max_record_chars]}"
         )
         lines.append(
-            f"{tried_label}\n{row.get('tried_methods', '')[:settings.max_record_chars]}"
+            f"{tried_label}\n{incorrect[:settings.max_record_chars]}"
         )
         lines.append(
-            f"{solution_label}\n{row.get('final_solution', '')[:settings.max_record_chars]}"
+            f"{solution_label}\n{correct[:settings.max_record_chars]}"
         )
-        if row.get("root_cause"):
-            lines.append(f"Note:\n{row['root_cause'][:settings.max_record_chars]}")
+        if not is_convention and record.root_cause:
+            lines.append(f"Note:\n{record.root_cause[:settings.max_record_chars]}")
         lines.append("")
     return lines
 

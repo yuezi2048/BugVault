@@ -2,9 +2,9 @@
 
 # BugVault
 
-**The AI Bug Vault — Catch every mistake once, never repeat it.**
+**BugVault — a local engineering-memory MCP prototype for coding agents.**
 
-*A local-first MCP server that gives LLMs persistent, cross-session memory for what "right" looks like in your project.*
+*A local-first MCP server prototype for preserving and retrieving project-specific engineering experience.*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io)
@@ -18,9 +18,21 @@
 
 ---
 
+## Project status (2026-09)
+
+BugVault is a **completed product-validation experiment**, not an active attempt to replace general-purpose memory components such as mem0, or established skill/spec/review workflows. The repository demonstrates a working vertical memory MCP — structured bug and convention records, local Markdown archives, hybrid retrieval, tracing, evaluation hooks, and graceful degradation — but it does **not** claim to have proven lower repair time, fewer repeated attempts, or real-world adoption.
+
+The product hypothesis was deliberately stopped after validation: for small or manually curated knowledge bases, Markdown/Git/ADR files are often enough; making every Agent action trigger retrieval adds latency and integration cost; and passive execution feedback can be represented by ordinary documentation and logs. The code is preserved as an engineering and product-learning artifact. See [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md) for the decision and evidence.
+
+**Use this repository to study:** MCP tool contracts, domain modeling, local-first persistence, hybrid retrieval, asynchronous consistency, Trace/Eval design, graceful degradation, and how to falsify a product hypothesis before adding more infrastructure.
+
+**What it does not claim:** BugVault is not a general Agent memory platform, not a proven alternative to mem0, and not a system that automatically prevents every future mistake. Core storage and retrieval are local; the optional RAG judge calls an external LLM when enabled.
+
+---
+
 ## What is BugVault?
 
-BugVault is a **local-first MCP (Model Context Protocol) server** that gives AI a memory of what "right" looks like in your project.
+BugVault is a **local-first MCP (Model Context Protocol) server prototype** for preserving and retrieving project-specific engineering experience.
 
 **What is an "AI Bug"?**
 
@@ -36,7 +48,7 @@ A bug isn't just a stack trace. An AI Bug is **anything an LLM does that doesn't
 
 BugVault captures **all of these** — not just crashes — with a single architecture: **retrieve → correct → remember → prevent**.
 
-All data stays **100% local** — no cloud, no API fees, no data leaks.
+Core storage and retrieval stay **local**. If the optional RAG judge is enabled, it calls the configured external LLM.
 
 ### Agent Self-Evolution Flywheel
 
@@ -48,7 +60,7 @@ All data stays **100% local** — no cloud, no API fees, no data leaks.
                   (LanceDB + .md + CLAUDE.md)
 ```
 
-Each completed cycle makes the Agent smarter — past solutions are retrievable, and prevention rules prevent the same mistake twice.
+Each completed cycle can leave behind a retrievable engineering record or a prevention rule. Whether this reduces future mistakes is a product hypothesis, not a claim established by this repository.
 
 ### What's New in v1.1.1 — Parent-Child Chunk Retrieval
 
@@ -167,7 +179,7 @@ See [codex-docs/refer/分析/05.交付形式.md](codex-docs/refer/分析/05.交�
 │     → vector indexed asynchronously                            │
 │  5. Agent calls reflect_and_prevent_error                      │
 │     → prevention rule written to CLAUDE.md                     │
-│  6. Next session: CLAUDE.md loaded → Agent never repeats       │
+│  6. Next session: CLAUDE.md loaded → Agent can reuse the rule   │
 └──────────────────┬────────────────────────────────────────────┘
                    │ JSON-RPC via stdio (MCP)
                    ▼
@@ -296,7 +308,7 @@ The .md file is written **before** the Agent gets the response — the archive i
 
 ### 🧠 `reflect_and_prevent_error` — Agent Self-Evolution
 
-This is what makes BugVault **smarter over time**. After resolving a bug, the Agent proactively reflects on the root cause:
+This is how BugVault can leave behind reusable engineering context. After resolving a bug, the Agent may reflect on the root cause:
 
 | Category | Meaning | Example |
 |----------|---------|---------|
@@ -306,7 +318,7 @@ This is what makes BugVault **smarter over time**. After resolving a bug, the Ag
 | `environment_issue` | Environment/config problem | "Missing system dependency" |
 | `other` | Catch-all | — |
 
-The prevention rule is written to **CLAUDE.md** under `## Bug Prevention Rules`. Since CLAUDE.md is loaded as part of the Agent's system prompt on the next session, the Agent **never makes the same mistake again**.
+The prevention rule is written to **CLAUDE.md** under `## Bug Prevention Rules`. Since CLAUDE.md is loaded as part of the Agent's system prompt on the next session, the rule is available for reuse; this repository does not claim that it prevents every recurrence.
 
 ---
 

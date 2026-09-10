@@ -2,9 +2,9 @@
 
 # BugVault
 
-**AI Bug Vault — 同样的错误，AI 不应该犯第二次。**
+**BugVault — 面向编码 Agent 的本地工程经验 MCP 原型。**
 
-*一个本地优先的 MCP 服务器，让 AI 记住你的项目「应该怎么做」。*
+*一个面向项目工程经验的本地优先 MCP 服务原型。*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io)
@@ -18,9 +18,21 @@
 
 ---
 
+## 项目状态（2026-09）
+
+BugVault 已完成一次**产品假设验证**，当前不是要替代 mem0 等通用记忆组件，也不是要替代成熟的 skill/spec/review 工作流。仓库证明了一个垂直记忆 MCP 的工程可行性：结构化 Bug/规约记录、本地 Markdown 归档、混合检索、Trace、评估钩子和多级降级都已实现；但它**没有证明**能够降低真实修复时间、减少 Agent 重复尝试，或已经获得真实用户采用。
+
+这次验证的结论是主动停止产品化：小规模或人工维护的知识库用 Markdown/Git/ADR 往往已经足够；让每次 Agent 行为都触发检索会带来不可接受的延迟和集成成本；被动记录执行反馈也可以用普通文档和日志表达。代码保留为工程与产品判断的学习资产。完整决策与证据见 [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md)。
+
+**这个仓库适合用来了解：** MCP 工具契约、领域建模、本地优先持久化、混合检索、异步一致性、Trace/Eval、多级降级，以及如何在继续堆基础设施前证伪产品假设。
+
+**明确边界：** BugVault 不是通用 Agent Memory 平台，不是已验证的 mem0 替代品，也不能保证 Agent 永远不再犯错。核心存储与检索是本地的；启用可选 RAG 裁判时会调用外部 LLM。
+
+---
+
 ## 项目介绍
 
-BugVault 是一个 **本地优先的 MCP 服务器**，让 AI 记住你的项目「应该怎么做」。
+BugVault 是一个面向项目工程经验的**本地优先 MCP 服务原型**，用于保存和检索项目特定的排障经验与规约。
 
 **什么是 "AI Bug"？**
 
@@ -36,7 +48,7 @@ Bug 不只是堆栈报错。AI Bug 是 **AI 做了任何不符合项目预期的
 
 BugVault 用同一套架构捕获 **所有这些**：**检索 → 纠正 → 记住 → 预防**。
 
-所有数据 **100% 本地存储** — 无云端、无 API 费用、无数据泄露。
+核心存储与检索保持**本地运行**；启用可选 RAG 裁判时，会调用配置的外部 LLM。
 
 ### Agent 自进化飞轮
 
@@ -48,7 +60,7 @@ BugVault 用同一套架构捕获 **所有这些**：**检索 → 纠正 → 记
             (LanceDB + .md + CLAUDE.md)
 ```
 
-每一次闭环都让 Agent 变得更聪明——过去的解决方案可以被检索，预防规则防止同样的错误犯两次。
+每一次闭环都可以留下可检索的工程记录或预防规则；它是否能减少未来错误，仍是待验证的产品假设，而不是本仓库已经证明的结论。
 
 ### v1.1.1 新增特性 — 父子文本块检索
 
@@ -168,7 +180,7 @@ uv run python scripts/rebuild_index.py --skip-clear
 │     → MD 立即归档 + 异步向量索引                               │    │
 │  5. Agent 调用 reflect_and_prevent_error                        │    │
 │     → 预防规则写入 CLAUDE.md                                    │    │
-│  6. 下次会话：CLAUDE.md 自动加载 → Agent 永不再犯              │    │
+│  6. 下次会话：CLAUDE.md 自动加载 → Agent 可复用这条规则          │    │
 └──────────────────┬────────────────────────────────────────────┘
                    │ JSON-RPC via stdio (MCP)
                    ▼
@@ -261,9 +273,9 @@ Agent 修复 Bug 后，保存**尝试路径** (`tried_methods`) 和**最终结�
 | **SYNC**（executor 线程） | **毫秒级** | Pydantic 校验 → MD5 record_id → 写入 .md 归档 → "saved successfully" |
 | **ASYNC**（fire-and-forget） | ~100ms | ONNX Embedding → LanceDB `merge_insert`（`record_id` 自动去重） |
 
-### 🧠 `reflect_and_prevent_error` — Agent 自进化
+### 🧠 `reflect_and_prevent_error` — 生成可复用的预防规则
 
-复盘工具是 BugVault **越用越聪明**的核心。Agent 主动反思根因，分为以下类别：
+复盘工具用于把一次排障留下为可复用的工程上下文。Agent 可以反思根因，分为以下类别：
 
 | 分类 | 含义 | 示例 |
 |------|------|------|
@@ -272,7 +284,7 @@ Agent 修复 Bug 后，保存**尝试路径** (`tried_methods`) 和**最终结�
 | `api_misuse` | API 使用错误 | "异步函数忘了 await" |
 | `environment_issue` | 环境/配置问题 | "缺少系统依赖" |
 
-预防规则写入 `CLAUDE.md` 的 `## Bug Prevention Rules` 章节。下次会话时，CLAUDE.md 作为 system prompt 自动加载，Agent **永不再犯同一错误**。
+预防规则写入 `CLAUDE.md` 的 `## Bug Prevention Rules` 章节。下次会话时，CLAUDE.md 作为 system prompt 自动加载，Agent 可以参考这条规则；本仓库不声称它能阻止所有错误复发。
 
 ---
 

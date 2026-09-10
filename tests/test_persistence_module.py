@@ -117,7 +117,7 @@ def test_convention_persistence_uses_its_archive_mapping_and_graph_writer():
     assert convention_graph_calls == [(graph_db, table_row)]
 
 
-def test_draft_skips_archive_but_remains_persistable():
+def test_draft_skips_archive_and_persistence():
     db = FakeDatabase()
     archived: list[BugRecord] = []
     persistence = RecordPersistence(
@@ -138,9 +138,12 @@ def test_draft_skips_archive_but_remains_persistable():
     assert prepared.missing_fields == ["tried_methods"]
     assert archived == []
 
-    persistence.persist(prepared.record)
-    assert len(db.parent_rows) == 1
-    assert len(db.chunk_rows) == 2
+    import pytest
+
+    with pytest.raises(ValueError, match="Cannot persist a draft"):
+        persistence.persist(prepared.record)
+    assert db.parent_rows == []
+    assert db.chunk_rows == []
 
 
 def test_invalid_record_has_no_archive_or_persistable_record():

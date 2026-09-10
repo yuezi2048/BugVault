@@ -60,16 +60,18 @@ BugVault は同一のアーキテクチャで **これらすべて** を扱い�
 - **🏗️ `rebuild_index.py`** — 1 ソースレコードにつき 1 親レコード + 2 チャンクを生成
 - **🔤 スマート技術スタックフィルター** — `target_tech_stack="Java"` が `"JavaScript"` に誤ヒットしません。
   除外辞書により `LIKE` のバージョンサフィックス柔軟性（例：`"Python"` → `"Python 3.13"`）を
-  維持しつつ、クロス技術の誤検出を防止します。詳細は [P1 クローズ証明](docs/tests/v1.1.1-test-report.md#8-v111-p1-問題闭环証明) を参照。
+  維持しつつ、クロス技術の誤検出を防止します。詳細は [P1 クローズ証明](codex-docs/tests/v1.1.1-test-report.md#8-v111-p1-問題闭环証明) を参照。
 
-### 3 つのツール
+### コアツール
 
-BugVault はバグ修正ライフサイクル全体をカバーする 3 つの MCP ツールを公開し、**各ツールは単一責任** を持ちます：
+BugVault はデフォルトで 5 つの MCP ツールを公開し、バグ修正と規約メモリをカバーします。**各ツールは単一責任** を持ちます：
 
 | ツール | 責任 | オプション |
 |--------|------|-----------|
 | `retrieve_bug_experience` | 🛠️ トラブル中 — 意味検索 + 精密再ランク + RAG 品質評価 | 評価はオプション |
 | `save_bug_experience` | 💾 解決後 — Markdown 即時保存 + バックグラウンド非同期ベクトル登録 | 非同期はオプション |
+| `save_convention` | 📐 プロジェクト規約の保存 | — |
+| `retrieve_convention` | 🔎 適用可能なプロジェクト規約の検索 | — |
 | `reflect_and_prevent_error` | 🧠 振り返り — 根本原因の分類 + CLAUDE.md への予防ルール書き込み | ✅ オプション |
 
 ### 主な機能
@@ -82,13 +84,13 @@ BugVault はバグ修正ライフサイクル全体をカバーする 3 つの M
 - **📦 ConventionRecord モデル** — 4 必須フィールド：`convention_name`、`trigger_context`、`incorrect_behavior`、`correct_behavior`
 - **🗄️ 自動スキーマ移行** — `_migrate_v2_schema_if_needed()` が起動時に v1.1.x データベースに `record_type` カラムを追加（冪等、安全）
 - **📚 独立した Markdown アーカイブ** — 規約は `~/.bugvault/archive/conventions/` に保存
-- 参照: [v2.0 リリースノート](docs/v2.0/v2.0.0-release-notes.md) と [規約仕様](docs/v2.0/convention-spec.md)
+- 参照: [v2.0 リリースノート](codex-docs/v2.0/v2.0.0-release-notes.md) と [規約仕様](codex-docs/v2.0/convention-spec.md)
 
 ### v1.1 新機能
 
-- **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) 参照
-- **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](docs/refer/设计/adr-cross-encoder-vs-colbert.md) 参照
-- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](docs/refer/设计/evaluation-strategy.md) および [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
+- **🎯 ハイブリッド検索** — ベクトル + FTS 全文検索の二系統を RRF(k=60) で融合、詳細は [v1.1 アーキテクチャ](codex-docs/refer/设计/04.v1.1-architecture.md) 参照
+- **⚡ Cross-Encoder 再ランク** — 軽量 ONNX モデルで 2 次スコアリング、[ADR 選定記錄](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md) 参照
+- **🧪 Claim-Level 評価** — CoT 思考連鎖で声明抽出 → 逐一検証 → `claims_analysis[]` 出力、[評価戦略](codex-docs/refer/设计/evaluation-strategy.md) および [v1.1 アーキテクチャ](codex-docs/refer/设计/04.v1.1-architecture.md#二評価リンク戦略パターン--二重フォールバック) 参照
 - **🛡️ 二重フォールバック** — クォータ制限 + 例外捕捉、LLM 解析失敗時もメインスレッドをブロックしない
 - **🔍 メタデータ事前フィルター** — `target_tech_stack` + `target_project_name`、大文字小文字を区別せず SQL インジェクション対策済み
 - **📊 Token 統計** — 評価ごとに `prompt_tokens` / `completion_tokens` / `total_tokens` を返却
@@ -124,7 +126,7 @@ uv sync
 cp .env.example .env
 # .env 編集 — BUGVAULT_ENABLE_RAG_EVAL=true と BUGVAULT_EVAL_LLM_API_KEY
 
-# 検証（137+ テスト）
+# 検証（現在 pytest で 190 件を収集；完全な成功数はモデル/e2e 環境に依存）
 uv run pytest -v
 
 #（オプション）アーカイブから再構築
@@ -150,7 +152,7 @@ MCP クライアント（Claude Desktop、Claude Code、Cursor 等）の設定�
 }
 ```
 
-詳細は [デプロイメントガイド](docs/refer/分析/05.交付形式.md) を参照。
+詳細は [デプロイメントガイド](codex-docs/refer/分析/05.交付形式.md) を参照。
 
 ---
 
@@ -374,7 +376,7 @@ BugRecord と**同一のデータベーステーブル**を `record_type="conven
 ## 開発
 
 ```bash
-uv run pytest -v                                    # 全 137 テスト
+uv run pytest -v                                    # 現在 190 件を収集；embedding モデルが必要
 uv run pytest tests/test_core.py -v                 # ユニットテスト
 uv run pytest tests/test_v2_services.py -v          # 振り返り + RAG 評価
 uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
@@ -386,12 +388,12 @@ uv run pytest tests/test_integration.py -v          # 統合テスト（~15s）
 
 | 判断 | 理由 | 参考 |
 |------|------|------|
-| **なぜ MCP なのか？** | "Write once, run everywhere" — あらゆる MCP クライアントで動作。ローカル stdio 通信、ポート不要、ネットワーク不要。 | [why-not-skill.md](docs/refer/分析/02.为什么不做成skill.md) |
-| **なぜ LanceDB なのか？** | ゼロ運用の組込データベース（ベクトル版 SQLite）。MVCC でロックフリー同時実行。ネイティブ FTS + メタデータフィルタリング。 | [why-lancedb.md](docs/refer/分析/03.为什么选择LanceDB.md) |
-| **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](docs/refer/分析/04.为什么选择SDK.md) |
-| **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
-| **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](docs/refer/设计/04.v1.1-architecture.md) |
-| **なぜ親子チャンク分割（v1.1.1）？** | 1 レコード 1 ベクトルでは `final_solution` が長いと `error_log_snippet` の特徴が希釈される。`error_log` チャンクと `semantic` チャンクの 2 つに分割し、チャンクレベル RRF + `parent_id` で統合することで精度が向上する。 | [v1.1.1 設計](docs/refer/设计/) |
+| **なぜ MCP なのか？** | "Write once, run everywhere" — あらゆる MCP クライアントで動作。ローカル stdio 通信、ポート不要、ネットワーク不要。 | [why-not-skill.md](codex-docs/refer/分析/02.为什么不做成skill.md) |
+| **なぜ LanceDB なのか？** | ゼロ運用の組込データベース（ベクトル版 SQLite）。MVCC でロックフリー同時実行。ネイティブ FTS + メタデータフィルタリング。 | [why-lancedb.md](codex-docs/refer/分析/03.为什么选择LanceDB.md) |
+| **なぜ LangChain を使わないのか？** | 線形 CRUD + ベクトル検索 — フレームワークは抽象化のコストだけを増やす。BugVault は推論エンジンではなくツールエンドポイント。 | [why-sdk.md](codex-docs/refer/分析/04.为什么选择SDK.md) |
+| **なぜ Cross-Encoder で ColBERT ではないのか？** | ColBERT は独立した PyTorch インデックス(~1.5GB)が必要。20 件の再ランクには Cross-Encoder ONNX(80MB) の方が高精度で依存も少ない。 | [ADR](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
+| **なぜ二重フォールバックが必要か？** | 小規模 LLM は複雑な CoT プロンプトで JSON フォーマットに失敗しやすい。クォータ＋例外の二重保護で評価リンクの異常が検索に影響しない。 | [v1.1 アーキテクチャ](codex-docs/refer/设计/04.v1.1-architecture.md) |
+| **なぜ親子チャンク分割（v1.1.1）？** | 1 レコード 1 ベクトルでは `final_solution` が長いと `error_log_snippet` の特徴が希釈される。`error_log` チャンクと `semantic` チャンクの 2 つに分割し、チャンクレベル RRF + `parent_id` で統合することで精度が向上する。 | [v1.1.1 設計](codex-docs/refer/设计/) |
 |------|------|
 | **なぜ `threading.Lock` が必要？** | LanceDB の `_table` は並行アクセス時に最新バージョンを保証しない |
 | **なぜ `mode='overwrite'`？** | `drop_table + create_table` が古いバージョン参照を残し "file not found" の原因に |

@@ -340,11 +340,11 @@ class TestConventionIngestion:
 
 
 # ===================================================================
-#  MCP tool schemas and handlers
+#  MCP tool schemas and persistence contract
 # ===================================================================
 
 class TestConventionToolSchemas:
-    """Test that convention tool schemas are defined and registered correctly."""
+    """Test convention schema metadata and persistence preparation."""
 
     def test_tools_import_and_schemas_exist(self):
         from bugvault.mcp_tools.tools import _CONVENTION_SAVE_SCHEMA, _CONVENTION_RETRIEVE_SCHEMA
@@ -363,41 +363,45 @@ class TestConventionToolSchemas:
         assert "query" in _CONVENTION_RETRIEVE_SCHEMA["properties"]
         assert _CONVENTION_RETRIEVE_SCHEMA["required"] == ["query"]
 
-    def test_sync_save_convention_validate_success(self):
-        from bugvault.mcp_tools.tools import _sync_save_convention_validate
+    def test_prepare_convention_success(self):
+        from bugvault.services.persistence_svc import RecordPersistence
 
-        texts, record = _sync_save_convention_validate({
+        archived: list[ConventionRecord] = []
+        prepared = RecordPersistence(
+            archive_convention=archived.append,
+        ).prepare_convention({
             "convention_name": "Test Rule",
             "trigger_context": "when writing code",
             "incorrect_behavior": "doing it wrong",
             "correct_behavior": "doing it right",
         })
-        assert record is not None
-        assert record.convention_name == "Test Rule"
-        assert any("saved successfully" in t.text for t in texts)
+        assert prepared.record is not None
+        assert prepared.record.convention_name == "Test Rule"
+        assert not prepared.is_draft
+        assert archived == [prepared.record]
 
-    def test_sync_save_convention_validate_fail(self):
-        from bugvault.mcp_tools.tools import _sync_save_convention_validate
+    def test_prepare_convention_rejects_invalid_input(self):
+        from bugvault.services.persistence_svc import RecordPersistence
 
-        texts, record = _sync_save_convention_validate({
+        prepared = RecordPersistence().prepare_convention({
             "convention_name": "Bad",
             # missing trigger_context
         })
-        assert record is None
-        assert any("Invalid convention" in t.text for t in texts)
+        assert prepared.record is None
+        assert prepared.validation_error is not None
 
-    def test_sync_save_convention_draft_on_whitespace(self):
+    def test_prepare_convention_draft_on_whitespace(self):
         """Whitespace-only field passes Pydantic but triggers draft mode."""
-        from bugvault.mcp_tools.tools import _sync_save_convention_validate
+        from bugvault.services.persistence_svc import RecordPersistence
 
-        texts, record = _sync_save_convention_validate({
+        prepared = RecordPersistence().prepare_convention({
             "convention_name": "Draft",
             "trigger_context": "ctx",
             "incorrect_behavior": "   ",  # whitespace passes min_length but flags as missing
             "correct_behavior": "good",
         })
-        assert record is not None  # still saved as draft
-        assert any("draft" in t.text.lower() for t in texts)
+        assert prepared.record is not None  # still saved as draft
+        assert prepared.is_draft
 
 
 # ===================================================================

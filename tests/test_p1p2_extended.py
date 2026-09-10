@@ -1,8 +1,8 @@
-"""P1 and P2 extended tests — async save, RAG action logic, edge cases.
+"""P1 and P2 extended tests — persistence, RAG action logic, edge cases.
 
 Addresses coverage gaps from docs/tests/v1.1.1-test-report.md:
 
-  P1 — TC-04: _async_embed_and_store (save flow async pipeline)
+  P1 — TC-04: RecordPersistence (save flow)
   P1 — TC-05: _compute_suggested_action + _append_eval_to_lines
   P2 — TC-06: Multiple tech_stack tags filtering
   P2 — TC-07: EmbeddingService edge cases (empty/long/special text)
@@ -12,155 +12,121 @@ Addresses coverage gaps from docs/tests/v1.1.1-test-report.md:
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 import os
-import tempfile
 
 import pytest
 
 from bugvault.config import Settings
-from bugvault.database.lancedb_client import LanceDBClient
-from bugvault.models.bug_record import BugRecord
 from bugvault.models.rag_eval_result import RAGEvalResult
 from bugvault.services.embedding_svc import EmbeddingService
-from bugvault.services.ingestion_svc import suggest_probe_questions, validate_and_prepare
-from bugvault.utils.logger import logger
+from bugvault.services.ingestion_svc import suggest_probe_questions
+from bugvault.services.persistence_svc import RecordPersistence
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  P1 — TC-04: Async Embed & Store (save pipeline)
+#  P1 — TC-04: Record Persistence (save pipeline)
 # ═══════════════════════════════════════════════════════════════════
 
 
-class TestAsyncEmbedAndStore:
-    """Verify the async save pipeline: embed → upsert parent → upsert chunks."""
+class _MemoryDatabase:
+    def __init__(self) -> None:
+        self.parents: dict[str, dict] = {}
+        self.chunks: dict[str, dict] = {}
 
-    @pytest.fixture
-    def db(self):
-        """Clean LanceDBClient in a temp directory."""
-        tmp = tempfile.mkdtemp(prefix="bugvault_p1_")
-        old_root = os.environ.get("BUGVAULT_DATA_ROOT", "")
-        os.environ["BUGVAULT_DATA_ROOT"] = tmp
-        client = LanceDBClient()
-        client.initialize()
-        yield client
-        import shutil
-        try:
-            shutil.rmtree(tmp, ignore_errors=True)
-        except Exception:
-            pass
-        if old_root:
-            os.environ["BUGVAULT_DATA_ROOT"] = old_root
+    def upsert_record(self, row: dict) -> None:
+        self.parents[row["record_id"]] = row
 
-    @pytest.fixture
-    def emb(self):
-        return EmbeddingService()
+    def upsert_chunks(self, rows: list[dict]) -> None:
+        for row in rows:
+            self.chunks[row["chunk_id"]] = row
 
-    @pytest.fixture
-    def record(self):
-        return BugRecord(
-            bug_title="P1 test save flow",
-            error_log_snippet="ValueError: invalid literal for int()",
-            tried_methods="Tried int() with try/except",
-            final_solution="Use str.isdigit() to validate before int()",
-            project_name="p1-test",
-            tech_stack="Python",
+
+class _BatchEmbedding:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        return [[float(index)] for index, _ in enumerate(texts)]
+
+
+class TestRecordPersistence:
+    """Verify the save pipeline through its public service interface."""
+
+    def test_save_creates_parent_and_chunks_with_one_embedding_batch(self):
+        db = _MemoryDatabase()
+        embedding = _BatchEmbedding()
+        persistence = RecordPersistence(
+            db=db,
+            embedding_svc=embedding,
+            archive_bug=lambda _: None,
+        )
+        prepared = persistence.prepare_bug({
+            "bug_title": "P1 test save flow",
+            "error_log_snippet": "ValueError: invalid literal for int()",
+            "tried_methods": "Tried int() with try/except",
+            "final_solution": "Use str.isdigit() to validate before int()",
+            "project_name": "p1-test",
+            "tech_stack": "Python",
+        })
+
+        assert prepared.record is not None
+        record = prepared.record
+        persistence.persist(record)
+
+        assert len(db.parents) == 1
+        assert len(db.chunks) == 2
+        assert {row["chunk_type"] for row in db.chunks.values()} == {
+            "error_log", "semantic",
+        }
+        assert embedding.calls == [[
+            record.to_search_text(),
+            *[chunk["search_text"] for chunk in record.to_chunks()],
+        ]]
+
+    def test_save_deduplicates_by_record_and_chunk_id(self):
+        db = _MemoryDatabase()
+        persistence = RecordPersistence(
+            db=db,
+            embedding_svc=_BatchEmbedding(),
+            archive_bug=lambda _: None,
+        )
+        prepared = persistence.prepare_bug({
+            "bug_title": "P1 dedup test",
+            "error_log_snippet": "ValueError: duplicate",
+            "tried_methods": "Tried casting",
+            "final_solution": "Validate before casting",
+        })
+
+        assert prepared.record is not None
+        persistence.persist(prepared.record)
+        persistence.persist(prepared.record)
+
+        assert len(db.parents) == 1
+        assert len(db.chunks) == 2
+
+    def test_prepare_returns_a_draft_without_archiving_or_persistence(self):
+        archived: list[object] = []
+        persistence = RecordPersistence(
+            db=_MemoryDatabase(),
+            embedding_svc=_BatchEmbedding(),
+            archive_bug=archived.append,
         )
 
-    async def _simulate_async_store(self, db, emb, record, loop, executor):
-        """Simulate _async_embed_and_store's inner _work() synchronously."""
-        from bugvault.mcp_tools.tools import _async_embed_and_store
-
-        search_text = record.to_search_text()
-        chunk_defs = record.to_chunks()
-        table_row = {
-            "record_id": record.record_id or "",
-            "bug_title": record.bug_title,
-            "error_log_snippet": record.error_log_snippet,
-            "tried_methods": record.tried_methods,
-            "final_solution": record.final_solution,
-            "project_name": record.project_name or "",
-            "tech_stack": record.tech_stack or "",
-            "root_cause": record.root_cause or "",
-            "create_time": record.create_time,
-            "search_text": search_text,
-            "record_type": "bug",
-        }
-        await _async_embed_and_store(loop, executor, db, emb, table_row, chunk_defs)
-
-    def test_save_creates_parent_and_chunks(self, db, emb, record):
-        """_async_embed_and_store creates 1 parent + 2 chunks."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-        try:
-            loop.run_until_complete(
-                self._simulate_async_store(db, emb, record, loop, executor)
-            )
-
-            # Verify parent record exists in bug_records
-            parent = db.fetch_records_by_ids([record.record_id or ""])
-            assert len(parent) == 1, "Parent record not found"
-            assert parent[0]["bug_title"] == record.bug_title
-            assert parent[0]["project_name"] == "p1-test"
-
-            # Verify 2 chunks exist
-            quoted = repr(record.record_id or "")
-            chunks = db._chunks_table.search().where(f"parent_id = {quoted}").to_list()
-            assert len(chunks) == 2, f"Expected 2 chunks, got {len(chunks)}"
-            chunk_types = {c["chunk_type"] for c in chunks}
-            assert chunk_types == {"error_log", "semantic"}, (
-                f"Unexpected chunk types: {chunk_types}"
-            )
-        finally:
-            loop.close()
-            executor.shutdown(wait=False)
-
-    def test_save_dedup_by_record_id(self, db, emb, record):
-        """Second save with same bug_title+error overwrites, no duplicate."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-        try:
-            # Save twice with identical data
-            for _ in range(2):
-                loop.run_until_complete(
-                    self._simulate_async_store(db, emb, record, loop, executor)
-                )
-
-            # Should only have 1 parent record
-            parent = db.fetch_records_by_ids([record.record_id or ""])
-            assert len(parent) == 1, f"Dedup failed: {len(parent)} records found"
-
-            # Should only have 2 chunks (not 4)
-            quoted = repr(record.record_id or "")
-            chunks = db._chunks_table.search().where(f"parent_id = {quoted}").to_list()
-            assert len(chunks) == 2, f"Chunk dedup failed: {len(chunks)} chunks found"
-        finally:
-            loop.close()
-            executor.shutdown(wait=False)
-
-    def test_save_handles_missing_fields(self, db, emb):
-        """Save with whitespace-only tried_methods returns draft status."""
-        from bugvault.mcp_tools.tools import _sync_save_validate
-
-        incomplete = {
+        prepared = persistence.prepare_bug({
             "bug_title": "Incomplete record",
             "error_log_snippet": "Some error",
             "tried_methods": "   ",
             "final_solution": "   ",
             "project_name": "test",
-        }
-        texts, record = _sync_save_validate(incomplete)
-        # _sync_save_validate returns (texts, record) even when missing fields
-        # because it calls validate_and_prepare which returns missing field names
-        # but still passes the record through
-        assert record is not None
-        combined = " ".join(t.text for t in texts) if texts else ""
-        assert "draft" in combined.lower() or "saved" in combined.lower()
+        })
+
+        assert prepared.record is not None
+        assert prepared.is_draft
+        assert prepared.missing_fields == ["tried_methods", "final_solution"]
+        assert archived == []
+        with pytest.raises(ValueError, match="Cannot persist a draft"):
+            persistence.persist(prepared.record)
 
 
 # ═══════════════════════════════════════════════════════════════════

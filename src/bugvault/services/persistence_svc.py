@@ -110,6 +110,8 @@ class RecordPersistence:
         """Batch-embed and write one parent record, its chunks, and Graph edges."""
         if self._db is None:
             raise RuntimeError("RecordPersistence requires a database")
+        if record.missing_required_fields():
+            raise ValueError("Cannot persist a draft record")
 
         embedded = self.embed(record)
         table_row = embedded.table_row

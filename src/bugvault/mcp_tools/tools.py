@@ -259,7 +259,7 @@ def register_tools(
                     "- 修 Bug（运行结果不对）→ 用 save_bug_experience\n"
                     "- 定规范（代码该怎么写）→ 用 save_convention\n"
                     "- 根因是系统性误解 → 再追加 reflect_and_prevent_error\n\n"
-                    "必须与 reasonix-doc/ 文档双写（各存一份，缺一违规）。"
+                    "BugVault 会保存结构化记录；如需额外留痕，请由客户端自行维护项目文档。"
                 ),
                 inputSchema=_SAVE_SCHEMA,
             ),
@@ -441,6 +441,7 @@ async def _handle_save_record(
 
     if (
         prepared.record is not None
+        and not prepared.is_draft
         and settings.enable_async_embedding
         and embedding_svc is not None
     ):

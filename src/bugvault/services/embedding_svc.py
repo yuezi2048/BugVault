@@ -6,6 +6,8 @@ should not own the embedding model.
 
 from __future__ import annotations
 
+import threading
+
 from bugvault.config import settings
 from bugvault.utils.logger import logger
 
@@ -21,7 +23,7 @@ class EmbeddingService:
 
     def __init__(self) -> None:
         self._model = None
-        self._init_model()
+        self._model_lock = threading.Lock()
 
     # ── public API ──────────────────────────────────────────────────
 
@@ -36,9 +38,7 @@ class EmbeddingService:
         have many texts — ONNX inference benefits significantly from
         internal batching.
         """
-        if self._model is None:
-            msg = "Embedding model is not initialised"
-            raise RuntimeError(msg)
+        self._ensure_model()
         return [r for r in self._model.embed(texts)]  # type: ignore[misc]
 
     # ── internal helpers ────────────────────────────────────────────
@@ -63,3 +63,18 @@ class EmbeddingService:
         # Warm-up: compile ONNX graph once at startup
         _ = list(self._model.embed(["warmup"]))
         logger.info("Embedding model ready")
+
+    def _ensure_model(self) -> None:
+        """Load the model on first use, outside the MCP startup handshake.
+
+        Model construction may consult the local FastEmbed cache or attempt a
+        network download.  Keeping it lazy lets the stdio server complete the
+        MCP ``initialize`` handshake even when the cache is incomplete or the
+        network is unavailable; the eventual tool call receives the concrete
+        model-loading error instead of a closed connection.
+        """
+        if self._model is not None:
+            return
+        with self._model_lock:
+            if self._model is None:
+                self._init_model()

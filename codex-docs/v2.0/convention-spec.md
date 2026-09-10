@@ -329,7 +329,7 @@ AI writes code following the correct_behavior:
 ### Why Markdown archive for conventions?
 
 - **Human-readable backup**: Same pattern as bug archives
-- **Git-trackable**: Can be committed to a docs/ directory
+- **Git-trackable**: Can be committed to a codex-docs/ directory
 - **Restorable**: Archive → rebuild pipeline works for conventions too
 
 ### Why 4 mandatory fields?

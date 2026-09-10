@@ -65,7 +65,7 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - **🔤 Smart Tech-Stack Filtering** — `target_tech_stack="Java"` won't match `"JavaScript"` entries,
   thanks to an exclusion dictionary that keeps `LIKE` flexibility for version suffixes
   (e.g. `"Python"` still matches `"Python 3.13"`) while preventing cross-technology false positives.
-  See [test report](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明) for P1 closure proof.
+  See [test report](codex-docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明) for P1 closure proof.
 
 ### What's New in v2.0 — Project Convention Memory
 
@@ -75,15 +75,15 @@ Each completed cycle makes the Agent smarter — past solutions are retrievable,
 - **📦 ConventionRecord Model** — 4 mandatory fields: `convention_name`, `trigger_context`, `incorrect_behavior`, `correct_behavior`
 - **🗄️ Auto Schema Migration** — `_migrate_v2_schema_if_needed()` adds the `record_type` column to existing v1.1.x tables at startup (idempotent, non-destructive)
 - **📚 Separate Markdown Archive** — Conventions archived to `~/.bugvault/archive/conventions/`
-- See [v2.0 release notes](docs/v2.0/v2.0.0-release-notes.md) and [convention spec](docs/v2.0/convention-spec.md)
+- See [v2.0 release notes](codex-docs/v2.0/v2.0.0-release-notes.md) and [convention spec](codex-docs/v2.0/convention-spec.md)
 
 ### What's New in v1.1
 
-- **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md)
-- **⚡ Cross-Encoder Reranking** — Lightweight ONNX cross-encoder for 2nd-pass precision — see [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md)
-- **🧪 Claim-Level RAG Evaluation** — CoT-based claim extraction + verification with per-claim `Supported/Reason` — see [evaluation strategy](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
+- **🎯 Hybrid Retrieval** — Vector + FTS dual recall fused via RRF (k=60) — see [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md)
+- **⚡ Cross-Encoder Reranking** — Lightweight ONNX cross-encoder for 2nd-pass precision — see [ADR](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md)
+- **🧪 Claim-Level RAG Evaluation** — CoT-based claim extraction + verification with per-claim `Supported/Reason` — see [evaluation strategy](codex-docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
 - **🛡️ Double Fallback** — Quota-based + exception-based graceful degradation — never crash on LLM parse errors
-- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter design](docs/refer/设计/metadata-filtering.md) and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
+- **🔍 Metadata Pre-filtering** — `target_tech_stack` + `target_project_name` for cross-language elimination — see [metadata filter design](codex-docs/refer/设计/metadata-filtering.md) and [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
 - **📊 Token Tracking** — `prompt_tokens` / `completion_tokens` / `total_tokens` returned per evaluation
 - **🧹 DB Maintenance** — `drop_table()` + concurrent batch rebuild via `scripts/rebuild_index.py`
 - **🔒 Path Safety** — Global `.expanduser().resolve()` + `mkdir(parents=True, exist_ok=True)` to prevent `~` and missing-directory crashes
@@ -121,7 +121,7 @@ uv sync
 cp .env.example .env
 # Edit .env — set BUGVAULT_ENABLE_RAG_EVAL=true and BUGVAULT_EVAL_LLM_API_KEY
 
-# Verify everything works (137+ tests)
+# Verify the test inventory (currently 190 collected tests; full pass count depends on local model/e2e environment)
 uv run pytest -v
 
 # (Optional) Seed the database with sample data
@@ -148,7 +148,7 @@ to launch BugVault as a subprocess. The standard config entry:
 }
 ```
 
-See [docs/refer/分析/05.交付形式.md](docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
+See [codex-docs/refer/分析/05.交付形式.md](codex-docs/refer/分析/05.交付形式.md) for detailed deployment instructions.
 
 ---
 
@@ -281,7 +281,7 @@ retrieve_bug_experience(
 2. Verify each claim against source context (✅ supported / ❌ unsupported / ⚠️ partial)
 3. Compute `faithfulness = supported_claims / total_claims`
 
-See [evaluation strategy](docs/refer/设计/evaluation-strategy.md) for full design details, and [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for the system integration.
+See [evaluation strategy](codex-docs/refer/设计/evaluation-strategy.md) for full design details, and [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) for the system integration.
 
 ### 💾 `save_bug_experience` — Zero-Blocking Persistence
 
@@ -551,7 +551,7 @@ See [.env.example](.env.example) for the complete list (20+ options).
 ### Running Tests
 
 ```bash
-# All 137 tests
+# Current test inventory: 190 collected tests; run in an environment with the embedding model available
 uv run pytest -v
 
 # Specific test groups
@@ -591,15 +591,15 @@ write_markdown_archive(record)                 # human-readable backup
 
 | Decision | Rationale | Reference |
 |----------|-----------|-----------|
-| **Why MCP over Skill/Plugin?** | "Write once, run everywhere" — any MCP client (Claude Desktop, Cursor, Windsurf) can use BugVault without per-platform adapters. Pure local `stdio` transport, no ports, no network. | [why-not-skill.md](docs/refer/分析/02.为什么不做成skill.md) |
-| **Why LanceDB over Chroma/FAISS?** | Zero-ops embedded database (like SQLite for vectors). In-process, no Docker. MVCC for lock-free concurrent reads/writes. Native FTS + metadata filtering via columnar storage. | [why-lancedb.md](docs/refer/分析/03.为什么选择LanceDB.md) |
-| **Why not LangChain/LangGraph?** | Linear CRUD + vector search — a framework adds abstraction without value. MCP is not an Agent framework; BugVault is a tool endpoint, not a reasoning loop. Full control over prompts and error handling. | [why-sdk.md](docs/refer/分析/04.为什么选择SDK.md) |
+| **Why MCP over Skill/Plugin?** | "Write once, run everywhere" — any MCP client (Claude Desktop, Cursor, Windsurf) can use BugVault without per-platform adapters. Pure local `stdio` transport, no ports, no network. | [why-not-skill.md](codex-docs/refer/分析/02.为什么不做成skill.md) |
+| **Why LanceDB over Chroma/FAISS?** | Zero-ops embedded database (like SQLite for vectors). In-process, no Docker. MVCC for lock-free concurrent reads/writes. Native FTS + metadata filtering via columnar storage. | [why-lancedb.md](codex-docs/refer/分析/03.为什么选择LanceDB.md) |
+| **Why not LangChain/LangGraph?** | Linear CRUD + vector search — a framework adds abstraction without value. MCP is not an Agent framework; BugVault is a tool endpoint, not a reasoning loop. Full control over prompts and error handling. | [why-sdk.md](codex-docs/refer/分析/04.为什么选择SDK.md) |
 | **Why fastembed ONNX over OpenAI embeddings?** | Local inference, zero API cost, offline-capable. ONNX runtime is CPU-only and already loaded for reranking — no GPU needed. | — |
-| **Why Cross-Encoder over ColBERT?** | ColBERT requires a separate PyTorch index (~1.5GB) + late interaction storage. For 20-candidate reranking, Cross-Encoder ONNX (80MB) is more accurate and zero new deps. | [ADR](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
-| **Why dual fallback on claim_level?** | Small LLMs (e.g. deepseek-v4-flash) frequently produce malformed JSON on complex CoT prompts. Quota + exception double fallback ensures RAG evaluation never crashes the retrieval pipeline. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
-| **Why Metadata Pre-filtering before ANN?** | Pure semantic search mixes Python `ModuleNotFoundError` with Java `ClassNotFoundException`. LanceDB's columnar `LOWER(tech_stack) LIKE '%python%'` filter reduces the candidate pool before vector search — negligible cost, eliminates cross-language hallucination. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
-| **Why RRF (rank-based) fusion not score-based?** | Vector distance and BM25 score have incommensurable scales — adding them directly is meaningless. RRF uses rank position (k=60), which is scale-agnostic and empirically robust. | [v1.1 architecture](docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
-| **Why parent-child chunking (v1.1.1)?** | Single-vector-per-record dilutes `error_log_snippet` when `final_solution` is long. Chunking creates 2 focused vectors per record — `error_log` chunk for exact error matching, `semantic` chunk for problem-topic similarity — with chunk-level RRF and parent-document assembly via `parent_id`. | [v1.1.1 redesign](docs/refer/设计/) |
+| **Why Cross-Encoder over ColBERT?** | ColBERT requires a separate PyTorch index (~1.5GB) + late interaction storage. For 20-candidate reranking, Cross-Encoder ONNX (80MB) is more accurate and zero new deps. | [ADR](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
+| **Why dual fallback on claim_level?** | Small LLMs (e.g. deepseek-v4-flash) frequently produce malformed JSON on complex CoT prompts. Quota + exception double fallback ensures RAG evaluation never crashes the retrieval pipeline. | [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
+| **Why Metadata Pre-filtering before ANN?** | Pure semantic search mixes Python `ModuleNotFoundError` with Java `ClassNotFoundException`. LanceDB's columnar `LOWER(tech_stack) LIKE '%python%'` filter reduces the candidate pool before vector search — negligible cost, eliminates cross-language hallucination. | [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
+| **Why RRF (rank-based) fusion not score-based?** | Vector distance and BM25 score have incommensurable scales — adding them directly is meaningless. RRF uses rank position (k=60), which is scale-agnostic and empirically robust. | [v1.1 architecture](codex-docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
+| **Why parent-child chunking (v1.1.1)?** | Single-vector-per-record dilutes `error_log_snippet` when `final_solution` is long. Chunking creates 2 focused vectors per record — `error_log` chunk for exact error matching, `semantic` chunk for problem-topic similarity — with chunk-level RRF and parent-document assembly via `parent_id`. | [v1.1.1 redesign](codex-docs/refer/设计/) |
 | **Why `ThreadPoolExecutor` for I/O?** | MCP's `asyncio` event loop must never block. LanceDB table operations and embedding inference run in a dedicated thread pool, keeping the event loop responsive for concurrent requests. | — |
 | **Why `response_format=json_object`?** | Without it, LLMs wrap JSON in markdown fences causing `JSONDecodeError`. Forced mode + retry-on-error double-locks parse stability. | — |
 

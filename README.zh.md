@@ -60,7 +60,7 @@ BugVault 用同一套架构捕获 **所有这些**：**检索 → 纠正 → 记
 - **🏗️ `rebuild_index.py`** — 每条源记录生成 1 条父记录 + 2 条子块
 - **🔤 智能技术栈过滤** — `target_tech_stack="Java"` 不会误匹配 `"JavaScript"`，
   通过排除字典在保留 `LIKE` 版本后缀弹性（如 `"Python"` 仍匹配 `"Python 3.13"`）的同时
-  消除跨技术栈误中。详情见 [P1 闭环证明](docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明)。
+  消除跨技术栈误中。详情见 [P1 闭环证明](codex-docs/tests/v1.1.1-test-report.md#8-v111-p1-问题闭环证明)。
 
 ### v2.0 新增特性 — 项目规约记忆
 
@@ -70,25 +70,27 @@ BugVault 用同一套架构捕获 **所有这些**：**检索 → 纠正 → 记
 - **📦 ConventionRecord 模型** — 4 个必填字段：`convention_name`、`trigger_context`、`incorrect_behavior`、`correct_behavior`
 - **🗄️ 自动 Schema 迁移** — `_migrate_v2_schema_if_needed()` 在启动时自动为 v1.1.x 数据库添加 `record_type` 列（幂等、无损）
 - **📚 独立 Markdown 归档** — 规约归档到 `~/.bugvault/archive/conventions/`
-- 参见 [v2.0 发布说明](docs/v2.0/v2.0.0-release-notes.md) 和 [规约规范](docs/v2.0/convention-spec.md)
+- 参见 [v2.0 发布说明](codex-docs/v2.0/v2.0.0-release-notes.md) 和 [规约规范](codex-docs/v2.0/convention-spec.md)
 
-### 三大核心工具
+### 核心工具
 
-BugVault 暴露三个 MCP 工具，覆盖排障的完整生命周期，**每个工具职责专一**：
+BugVault 默认暴露五个 MCP 工具，覆盖排障与规约记忆的完整生命周期，**每个工具职责专一**：
 
 | 工具 | 职责 | 可选 |
 |------|------|------|
 | `retrieve_bug_experience` | 🛠️ 排障中 — 语义检索 + 精细重排 + RAG 质量评估 | 评估可选 |
 | `save_bug_experience` | 💾 排障后 — Markdown 立即可读 + 后台异步向量入库 | 异步可选 |
+| `save_convention` | 📐 保存项目架构/业务/测试/风格规约 | — |
+| `retrieve_convention` | 🔎 检索适用的项目规约 | — |
 | `reflect_and_prevent_error` | 🧠 复盘后 — 分类根因 + 写入 CLAUDE.md 预防规则 | ✅ 可选 |
 
 ### v1.1 新增特性
 
-- **🎯 混合检索** — 密集向量 + FTS 全文搜索双路召回，RRF(k=60)融合，参见 [v1.1 架构文档](docs/refer/设计/04.v1.1-architecture.md)
-- **⚡ Cross-Encoder 精排** — 轻量 ONNX 交叉编码器二次打分，参见 [ADR 选型记录](docs/refer/设计/adr-cross-encoder-vs-colbert.md)
-- **🧪 Claim-Level 评估** — CoT 思维链提取声明 → 逐条验证，输出 `claims_analysis[]`，参见 [评估策略](docs/refer/设计/evaluation-strategy.md) 全文和 [架构文档](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
+- **🎯 混合检索** — 密集向量 + FTS 全文搜索双路召回，RRF(k=60)融合，参见 [v1.1 架构文档](codex-docs/refer/设计/04.v1.1-architecture.md)
+- **⚡ Cross-Encoder 精排** — 轻量 ONNX 交叉编码器二次打分，参见 [ADR 选型记录](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md)
+- **🧪 Claim-Level 评估** — CoT 思维链提取声明 → 逐条验证，输出 `claims_analysis[]`，参见 [评估策略](codex-docs/refer/设计/evaluation-strategy.md) 全文和 [架构文档](codex-docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级)
 - **🛡️ 双重降级** — 配额熔断 + 异常捕获双重保护，LLM 解析崩溃不阻塞检索链
-- **🔍 元数据预过滤** — `target_tech_stack` + `target_project_name`，大小写容错 + SQL 注入防护，参见 [元数据过滤设计](docs/refer/设计/metadata-filtering.md) 和 [架构文档](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
+- **🔍 元数据预过滤** — `target_tech_stack` + `target_project_name`，大小写容错 + SQL 注入防护，参见 [元数据过滤设计](codex-docs/refer/设计/metadata-filtering.md) 和 [架构文档](codex-docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤)
 - **📊 Token 统计** — 每次评估返回 `prompt_tokens` / `completion_tokens` / `total_tokens`
 - **🧹 数据库维护** — `drop_table()` + 并发 batch rebuild，65 条记录 0.6 秒完成
 - **🔒 路径安全** — 全局 `.expanduser().resolve()` + `mkdir()` 前置创建
@@ -122,7 +124,7 @@ uv sync
 cp .env.example .env
 # 编辑 .env — 设置 BUGVAULT_ENABLE_RAG_EVAL=true 和 BUGVAULT_EVAL_LLM_API_KEY
 
-# 验证（137+ 测试）
+# 验证（当前 pytest 收集 190 项；完整通过数取决于本地模型/e2e 环境）
 uv run pytest -v
 
 #（可选）从存档重建索引
@@ -148,7 +150,7 @@ uv run python scripts/rebuild_index.py --skip-clear
 }
 ```
 
-参见 [交付形式文档](docs/refer/分析/05.交付形式.md) 了解详细部署说明。
+参见 [交付形式文档](codex-docs/refer/分析/05.交付形式.md) 了解详细部署说明。
 
 ---
 
@@ -407,7 +409,7 @@ Agent 修复 Bug 后，保存**尝试路径** (`tried_methods`) 和**最终结�
 ## 开发
 
 ```bash
-uv run pytest -v                                    # 全部 137 个测试
+uv run pytest -v                                    # 当前收集 190 项；需本地 embedding 模型
 uv run pytest tests/test_core.py -v                 # 单元测试
 uv run pytest tests/test_v2_services.py -v          # 复盘 + RAG 评估
 uv run pytest tests/test_integration.py -v          # 集成测试（~15s）
@@ -419,15 +421,15 @@ uv run pytest tests/test_integration.py -v          # 集成测试（~15s）
 
 | 决策 | 理由 | 参考文档 |
 |------|------|----------|
-| **为什么用 MCP 而非 Skill/插件？** | "一次编写，处处运行"——所有 MCP 客户端开箱即用。纯本地 stdio 通信，不暴露端口，不依赖网络。 | [为什么不做 skill](docs/refer/分析/02.为什么不做成skill.md) |
-| **为什么用 LanceDB 而非 Chroma/FAISS？** | 零运维嵌入式数据库（向量界的 SQLite），进程内嵌无需 Docker。MVCC 无锁并发读写。列式存储原生支持元数据过滤 + FTS。 | [为什么选择 LanceDB](docs/refer/分析/03.为什么选择LanceDB.md) |
-| **为什么不用 LangChain/LangGraph？** | 线性 CRUD + 向量搜索——框架在这里只会增加抽象层。MCP 不是 Agent 框架；BugVault 是工具端点，不是推理引擎。 | [为什么选择 SDK](docs/refer/分析/04.为什么选择SDK.md) |
+| **为什么用 MCP 而非 Skill/插件？** | "一次编写，处处运行"——所有 MCP 客户端开箱即用。纯本地 stdio 通信，不暴露端口，不依赖网络。 | [为什么不做 skill](codex-docs/refer/分析/02.为什么不做成skill.md) |
+| **为什么用 LanceDB 而非 Chroma/FAISS？** | 零运维嵌入式数据库（向量界的 SQLite），进程内嵌无需 Docker。MVCC 无锁并发读写。列式存储原生支持元数据过滤 + FTS。 | [为什么选择 LanceDB](codex-docs/refer/分析/03.为什么选择LanceDB.md) |
+| **为什么不用 LangChain/LangGraph？** | 线性 CRUD + 向量搜索——框架在这里只会增加抽象层。MCP 不是 Agent 框架；BugVault 是工具端点，不是推理引擎。 | [为什么选择 SDK](codex-docs/refer/分析/04.为什么选择SDK.md) |
 | **为什么用 fastembed ONNX 而非 OpenAI 嵌入？** | 本地推理，零 API 费用，离线可用。ONNX 纯 CPU 运行，无需 GPU。 | — |
-| **为什么用 Cross-Encoder 而非 ColBERT？** | ColBERT 需要独立 PyTorch 索引(~1.5GB)。对于 20 条候选的重排场景，Cross-Encoder ONNX(80MB) 精度更高、依赖更少。 | [ADR 选型记录](docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
-| **为什么 claim_level 需要双重降级？** | 小模型（如 deepseek-v4-flash）在复杂 CoT 提示词下频繁产出残缺 JSON。配额 + 异常双重降级保证评估链路崩溃不影响检索主线程。 | [v1.1 架构](docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
-| **为什么做元数据预过滤？** | 纯语义搜索会把 Python 的 ModuleNotFoundError 和 Java 的 ClassNotFoundException 混淆。列式过滤在向量计算前缩小候选集，成本可忽略。 | [v1.1 架构](docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
-| **为什么 RRF 用排名而非分数？** | 向量距离和 BM25 分数的量纲不同，直接相加毫无意义。RRF 只依赖排名位置(k=60)，量纲无关。 | [v1.1 架构](docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
-| **为什么做父子文本块切分（v1.1.1）？** | 单条长向量让 `error_log_snippet` 被 `final_solution` 稀释。切分为 2 条聚焦短向量—`error_log` 块精确匹配报错特征、`semantic` 块匹配问题语义—chunk 级 RRF 融合 + `parent_id` 归并成完整文档。 | [v1.1.1 设计文档](docs/refer/设计/) |
+| **为什么用 Cross-Encoder 而非 ColBERT？** | ColBERT 需要独立 PyTorch 索引(~1.5GB)。对于 20 条候选的重排场景，Cross-Encoder ONNX(80MB) 精度更高、依赖更少。 | [ADR 选型记录](codex-docs/refer/设计/adr-cross-encoder-vs-colbert.md) |
+| **为什么 claim_level 需要双重降级？** | 小模型（如 deepseek-v4-flash）在复杂 CoT 提示词下频繁产出残缺 JSON。配额 + 异常双重降级保证评估链路崩溃不影响检索主线程。 | [v1.1 架构](codex-docs/refer/设计/04.v1.1-architecture.md#二评估链路策略模式--双重降级) |
+| **为什么做元数据预过滤？** | 纯语义搜索会把 Python 的 ModuleNotFoundError 和 Java 的 ClassNotFoundException 混淆。列式过滤在向量计算前缩小候选集，成本可忽略。 | [v1.1 架构](codex-docs/refer/设计/04.v1.1-architecture.md#三元数据预过滤) |
+| **为什么 RRF 用排名而非分数？** | 向量距离和 BM25 分数的量纲不同，直接相加毫无意义。RRF 只依赖排名位置(k=60)，量纲无关。 | [v1.1 架构](codex-docs/refer/设计/04.v1.1-architecture.md#1.2-rrf-融合) |
+| **为什么做父子文本块切分（v1.1.1）？** | 单条长向量让 `error_log_snippet` 被 `final_solution` 稀释。切分为 2 条聚焦短向量—`error_log` 块精确匹配报错特征、`semantic` 块匹配问题语义—chunk 级 RRF 融合 + `parent_id` 归并成完整文档。 | [v1.1.1 设计文档](codex-docs/refer/设计/) |
 |------|------|
 | **为什么用 `threading.Lock`？** | LanceDB 的 Python `_table` 在并发时不保证可见性，不加锁 `search()` 会读到旧版本 |
 | **为什么用 `mode='overwrite'`？** | `drop_table + create_table` 残留旧版本引用导致 "file not found"，`overwrite` 原子替换 |

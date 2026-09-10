@@ -22,11 +22,18 @@
 
 BugVault is a **completed product-validation experiment**, not an active attempt to replace general-purpose memory components such as mem0, or established skill/spec/review workflows. The repository demonstrates a working vertical memory MCP — structured bug and convention records, local Markdown archives, hybrid retrieval, tracing, evaluation hooks, and graceful degradation — but it does **not** claim to have proven lower repair time, fewer repeated attempts, or real-world adoption.
 
-The product hypothesis was deliberately stopped after validation: for small or manually curated knowledge bases, Markdown/Git/ADR files are often enough; making every Agent action trigger retrieval adds latency and integration cost; and passive execution feedback can be represented by ordinary documentation and logs. The code is preserved as an engineering and product-learning artifact. See [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md) for the decision and evidence.
+The product hypothesis was deliberately stopped after validation: for small or manually curated knowledge bases, Markdown/Git/ADR files are often enough; making every Agent action trigger retrieval adds latency and integration cost; and passive execution feedback can be represented by ordinary documentation and logs. The code is preserved as a student-era engineering and product-learning artifact: more substantial than a throwaway demo, but intentionally not presented as a differentiated production product. See [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md) for the decision and evidence.
 
 **Use this repository to study:** MCP tool contracts, domain modeling, local-first persistence, hybrid retrieval, asynchronous consistency, Trace/Eval design, graceful degradation, and how to falsify a product hypothesis before adding more infrastructure.
 
 **What it does not claim:** BugVault is not a general Agent memory platform, not a proven alternative to mem0, and not a system that automatically prevents every future mistake. Core storage and retrieval are local; the optional RAG judge calls an external LLM when enabled.
+
+### How to choose a tool today
+
+- Need general-purpose, cross-session Agent memory: start with [mem0](https://github.com/mem0ai/mem0), Zep, Letta, or LangMem.
+- Need local embedded vector, full-text, or hybrid retrieval: evaluate [Alibaba's zvec](https://github.com/alibaba/zvec). Its current feature set includes in-process storage, dense/sparse vectors, FTS, hybrid search, filtering, persistence, and concurrent access; [zvec-grep](https://zvec.org/) also targets local workspace search for people and agents.
+- Need deliberate project decisions and execution workflow: use Markdown/Git, ADRs, and a skill/spec/review workflow.
+- Read BugVault when you want a compact case study of building — and then product-validating — a vertical coding-memory MCP.
 
 ---
 

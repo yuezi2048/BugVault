@@ -22,11 +22,18 @@
 
 BugVault 已完成一次**产品假设验证**，当前不是要替代 mem0 等通用记忆组件，也不是要替代成熟的 skill/spec/review 工作流。仓库证明了一个垂直记忆 MCP 的工程可行性：结构化 Bug/规约记录、本地 Markdown 归档、混合检索、Trace、评估钩子和多级降级都已实现；但它**没有证明**能够降低真实修复时间、减少 Agent 重复尝试，或已经获得真实用户采用。
 
-这次验证的结论是主动停止产品化：小规模或人工维护的知识库用 Markdown/Git/ADR 往往已经足够；让每次 Agent 行为都触发检索会带来不可接受的延迟和集成成本；被动记录执行反馈也可以用普通文档和日志表达。代码保留为工程与产品判断的学习资产。完整决策与证据见 [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md)。
+这次验证的结论是主动停止产品化：小规模或人工维护的知识库用 Markdown/Git/ADR 往往已经足够；让每次 Agent 行为都触发检索会带来不可接受的延迟和集成成本；被动记录执行反馈也可以用普通文档和日志表达。代码保留为学生时代的一次工程与产品探索——比一次性 Demo 更完整，但不再把它包装成有独立壁垒的生产产品。完整决策与证据见 [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md)。
 
 **这个仓库适合用来了解：** MCP 工具契约、领域建模、本地优先持久化、混合检索、异步一致性、Trace/Eval、多级降级，以及如何在继续堆基础设施前证伪产品假设。
 
 **明确边界：** BugVault 不是通用 Agent Memory 平台，不是已验证的 mem0 替代品，也不能保证 Agent 永远不再犯错。核心存储与检索是本地的；启用可选 RAG 裁判时会调用外部 LLM。
+
+### 今天该如何选择工具
+
+- 需要通用的跨会话 Agent 记忆：优先评估 [mem0](https://github.com/mem0ai/mem0)、Zep、Letta 或 LangMem。
+- 需要本地嵌入式向量、全文或混合检索：评估 [Alibaba 的 zvec](https://github.com/alibaba/zvec)。它已经提供进程内存储、稠密/稀疏向量、全文检索、混合搜索、结构化过滤、持久化和并发访问；[zvec-grep](https://zvec.org/) 还直接面向人类和 Agent 的本地工作区搜索。
+- 需要沉淀明确的项目决策和执行流程：使用 Markdown/Git、ADR，以及 skill/spec/review 工作流。
+- 如果你想了解如何构建并最终验证一个垂直的编码记忆 MCP，欢迎把 BugVault 当作一个小型案例研究来阅读。
 
 ---
 

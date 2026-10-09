@@ -31,9 +31,12 @@ The product hypothesis was deliberately stopped after validation: for small or m
 ### How to choose a tool today
 
 - Need general-purpose, cross-session Agent memory: start with [mem0](https://github.com/mem0ai/mem0), Zep, Letta, or LangMem.
+- Need a browsable, scope-aware context store for agents (knowledge, memory, and skills as a filesystem): evaluate [Volcengine's OpenViking](https://github.com/volcengine/OpenViking) — `viking://` filesystem, L0/L1/L2 layers, lifecycle hooks, async memory extraction (AGPLv3 core).
 - Need local embedded vector, full-text, or hybrid retrieval: evaluate [Alibaba's zvec](https://github.com/alibaba/zvec). Its current feature set includes in-process storage, dense/sparse vectors, FTS, hybrid search, filtering, persistence, and concurrent access; [zvec-grep](https://zvec.org/) also targets local workspace search for people and agents.
 - Need deliberate project decisions and execution workflow: use Markdown/Git, ADRs, and a skill/spec/review workflow.
 - Read BugVault when you want a compact case study of building — and then product-validating — a vertical coding-memory MCP.
+
+For a side-by-side capability write-up of mem0 / OpenViking / zvec and the reasoning behind stopping this project, see [`docs/research/zvec-openviking-reading-and-direction.md`](docs/research/zvec-openviking-reading-and-direction.md), [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md), and [ADR-0002](docs/adr/0002-agent-memory-needs-effect-measurement.md).
 
 ---
 

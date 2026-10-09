@@ -24,3 +24,13 @@ The code and design work remain reusable evidence of experience with MCP tool co
 ## Reconsideration trigger
 
 Reopen this decision only if a concrete workflow is found where BugVault changes an externally visible outcome that Markdown/Git, existing skills, or general memory components cannot provide, and that outcome can be measured with a before/after experiment.
+
+## 2026-10 conclusion update (public note)
+
+This addendum does not change the Decision above; it states the conclusion explicitly for readers and points to further reading.
+
+- **Conclusion:** BugVault is not a viable independent or general-purpose memory product, and productisation is frozen. The repository is kept as a case study in validating — and then falsifying — a product hypothesis.
+- **New evidence:** a survey of the same space shows the vertical layer is covered from both ends — [mem0](https://github.com/mem0ai/mem0) (general memory lifecycle), [OpenViking](https://github.com/volcengine/OpenViking) (filesystem-style context/asset platform with lifecycle hooks and async memory extraction), and [zvec](https://github.com/alibaba/zvec) (in-process vector/FTS/hybrid retrieval engine). See [ADR-0002](0002-agent-memory-needs-effect-measurement.md) for the measurement framing.
+- **Reserved value:** the method — hypothesis → build → competitive/source reading → falsification → boundary drawing — is the reusable outcome.
+- **Further reading:** [Agent memory / retrieval landscape and BugVault conclusion](../research/zvec-openviking-reading-and-direction.md) — capability notes and when to use OpenViking, zvec, or mem0.
+- **Only path to reopen:** see the Reconsideration trigger above; the one remaining hypothesis worth testing is measuring whether a memory actually changes agent behaviour.

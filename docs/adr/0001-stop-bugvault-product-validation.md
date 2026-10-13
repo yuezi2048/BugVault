@@ -1,6 +1,6 @@
 # Stop BugVault as an independent product
 
-**Status:** accepted
+**Status:** accepted — superseded in part by [ADR-0003](0003-reopen-verification-gate.md)
 
 BugVault's original product hypothesis was that a dedicated MCP memory layer for coding agents would be valuable because it could persist bugs, failed attempts, project conventions, and prevention rules. We decided to stop validating BugVault as an independent product and freeze feature expansion. The implemented system remains a useful engineering prototype and portfolio artifact, but it is not currently justified as a standalone replacement for general memory components or established skill/spec/review workflows.
 
@@ -34,3 +34,7 @@ This addendum does not change the Decision above; it states the conclusion expli
 - **Reserved value:** the method — hypothesis → build → competitive/source reading → falsification → boundary drawing — is the reusable outcome.
 - **Further reading:** [Agent memory / retrieval landscape and BugVault conclusion](../research/zvec-openviking-reading-and-direction.md) — capability notes and when to use OpenViking, zvec, or mem0.
 - **Only path to reopen:** see the Reconsideration trigger above; the one remaining hypothesis worth testing is measuring whether a memory actually changes agent behaviour.
+
+### 2026-10 partial supersede
+
+- **[ADR-0003](0003-reopen-verification-gate.md)** lifts this ADR's freeze for one exploratory slice only — making recorded engineering experience credible (verification gate, record status, same-project recurrence detection). The core finding above still stands, and ADR-0001's freeze remains in force for general memory, the retrieval kernel, and provider abstraction.

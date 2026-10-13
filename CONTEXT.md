@@ -51,6 +51,20 @@
 - **Record establishment**: a complete record becomes a formal memory after
   validation and successful Archive write. Vector and Graph projections are
   eventually consistent and may lag or fail without invalidating the record.
+- **Verification evidence**: executable evidence, such as a test command and
+  its result, attached to a Bug Record or Convention Record to show that a fix
+  or rule actually works. It is distinct from Archive provenance and from
+  reflection.
+- **Verification gate**: the rule that a Bug Record or Convention Record may
+  reach the `verified` status only when it carries Verification evidence. A
+  record without such evidence stays `suspected`.
+- **Record status**: the lifecycle state of a Bug Record or Convention Record,
+  covering `suspected`, `verified`, and `invalidated`, with defined transitions.
+  It is distinct from the Draft persistence state.
+- **Recurrence detection**: detection that the same failure is happening again
+  within one project, surfaced against the existing record for that failure. It
+  is distinct from record identity (deduplication) and from cross-project
+  promotion.
 - **Empty retrieval**: a valid query with no matching records is a normal empty
   result, distinct from validation or storage failure.
 - **RAG evaluation**: an optional quality assessment attached to retrieval; it

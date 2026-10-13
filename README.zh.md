@@ -34,6 +34,7 @@ BugVault 已完成一次**产品假设验证**，当前不是要替代 mem0 等�
 - 需要本地嵌入式向量、全文或混合检索：评估 [Alibaba 的 zvec](https://github.com/alibaba/zvec)。它已经提供进程内存储、稠密/稀疏向量、全文检索、混合搜索、结构化过滤、持久化和并发访问；[zvec-grep](https://zvec.org/) 还直接面向人类和 Agent 的本地工作区搜索。
 - 需要沉淀明确的项目决策和执行流程：使用 Markdown/Git、ADR，以及 skill/spec/review 工作流。
 - 如果你想了解如何构建并最终验证一个垂直的编码记忆 MCP，欢迎把 BugVault 当作一个小型案例研究来阅读。
+- 想横向对比编码 Agent 记忆方案（nova / claude-mem / ECC / mem0）、看清哪些差异点尚未被占据，以及针对该缺口的一次窄范围重开：见 [`docs/research/competitive-landscape.md`](docs/research/competitive-landscape.md) 与 [ADR-0003](docs/adr/0003-reopen-verification-gate.md)。
 
 ---
 

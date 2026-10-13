@@ -30,6 +30,7 @@ BugVault は**製品仮説の検証を完了したプロトタイプ**です。m
 - ローカル組み込み型のベクトル、全文、ハイブリッド検索が必要なら、[Alibaba の zvec](https://github.com/alibaba/zvec) を評価してください。プロセス内ストレージ、密/疎ベクトル、全文検索、ハイブリッド検索、フィルタ、永続化、同時アクセスを備えています。[zvec-grep](https://zvec.org/) は人間と Agent 向けのローカルワークスペース検索も提供します。
 - 明示的なプロジェクト決定と実行フローを管理するなら、Markdown/Git、ADR、skill/spec/review ワークフローを使うのが適切です。
 - 垂直型のコーディング記憶 MCP を構築し、製品仮説を検証して停止するまでの事例を読みたい場合に、このリポジトリを参照してください。
+- コーディング Agent のメモリ方案（nova / claude-mem / ECC / mem0）を横断比較し、まだ埋まっていない差分と、そのギャップに対する限定的な再開を把握したい場合：[`docs/research/competitive-landscape.md`](docs/research/competitive-landscape.md) と [ADR-0003](docs/adr/0003-reopen-verification-gate.md) を参照してください。
 
 ---
 

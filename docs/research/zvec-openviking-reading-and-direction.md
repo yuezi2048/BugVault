@@ -114,4 +114,5 @@ BugVault 原以为差异化的两点——强制记录"失败尝试"、把复盘
 | BugVault 结论与否决理由 | [`docs/adr/0001`](../adr/0001-stop-bugvault-product-validation.md) |
 | BugVault 现有 MCP 工具与 reflection 写回 | `src/bugvault/mcp_tools/tools.py`、`src/bugvault/services/reflection_svc.py` |
 | mem0 设计对照（只增不改 / ID 防幻觉 / 实体层） | [`mem0-source-reading.md`](./mem0-source-reading.md) |
+| 编码 Agent 记忆横向调研（nova / claude-mem / ECC / mem0） | [`competitive-landscape.md`](./competitive-landscape.md) |
 | LanceDB 选型理由 | [`codex-docs/refer/分析/03.为什么选择LanceDB.md`](../../codex-docs/refer/分析/03.为什么选择LanceDB.md) |

@@ -36,7 +36,7 @@ The product hypothesis was deliberately stopped after validation: for small or m
 - Need deliberate project decisions and execution workflow: use Markdown/Git, ADRs, and a skill/spec/review workflow.
 - Read BugVault when you want a compact case study of building — and then product-validating — a vertical coding-memory MCP.
 
-For a side-by-side capability write-up of mem0 / OpenViking / zvec and the reasoning behind stopping this project, see [`docs/research/zvec-openviking-reading-and-direction.md`](docs/research/zvec-openviking-reading-and-direction.md), [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md), and [ADR-0002](docs/adr/0002-agent-memory-needs-effect-measurement.md).
+For a side-by-side capability write-up of mem0 / OpenViking / zvec and the reasoning behind stopping this project, see [`docs/research/zvec-openviking-reading-and-direction.md`](docs/research/zvec-openviking-reading-and-direction.md), [ADR-0001](docs/adr/0001-stop-bugvault-product-validation.md), and [ADR-0002](docs/adr/0002-agent-memory-needs-effect-measurement.md). For a survey of coding-agent memory projects (nova / claude-mem / ECC / mem0), the gap BugVault targets next, and the narrow reopen of that gap, see [`docs/research/competitive-landscape.md`](docs/research/competitive-landscape.md) and [ADR-0003](docs/adr/0003-reopen-verification-gate.md).
 
 ---
 

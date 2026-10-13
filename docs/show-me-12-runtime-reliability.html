@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Python 工程可靠性与资源管理 · BugVault 运行时资源边界图 + 一次调用时序图</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1220px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:24px}
+  h1{font-size:clamp(20px,3vw,27px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-top:6px;text-transform:uppercase}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:84ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;box-shadow:var(--shadow);color:var(--ink2)}
+  nav.top a.on{border-color:var(--b1);color:var(--b1);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;border-left:3px solid var(--pc,var(--b1))}
+  .p1{--pc:var(--b1)}.p2{--pc:var(--b2)}.p3{--pc:var(--b5)}.p4{--pc:var(--b4)}.p5{--pc:var(--warn)}
+  .phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .phead .pt{font-size:15.5px;font-weight:700}
+  .phead .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:var(--b1);border:1px solid #adc6ff;font-weight:600}
+  .phead .tag.warn{background:var(--warnbg);color:var(--warn);border-color:#ffbb96}
+  .phead .tag.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .phead .tag.pur{background:#f9f0ff;color:var(--b2);border-color:#d3adf7}
+  .phead .src{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .pdesc{font-size:13px;color:var(--ink2);margin:6px 0 16px}
+  .pdesc code,td code,li code,.kv code,.chip code,.callout code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px;margin-top:4px;align-items:baseline}
+  .kv .k{font-family:var(--mono);font-size:11.5px;color:var(--b1);white-space:nowrap}
+  .kv .v{color:var(--ink2)}.kv .v b{color:var(--ink);font-weight:600}
+
+  /* ---------------- 资源边界图 ---------------- */
+  .arch{display:grid;grid-template-columns:1fr 168px 1fr;gap:0;align-items:stretch;margin-top:6px}
+  .domain{border:1px solid var(--line);border-radius:13px;padding:14px 15px;background:#fff}
+  .domain.loop{border-color:#adc6ff;box-shadow:0 0 0 3px #eef4ff}
+  .domain.pool{border-color:#d3adf7;box-shadow:0 0 0 3px #f9f0ff}
+  .domain h3{font-size:14px;font-weight:700;display:flex;align-items:baseline;gap:8px}
+  .domain h3 .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .domain.loop h3 .dot{background:var(--b1)}.domain.pool h3 .dot{background:var(--b2)}
+  .domain h3 .sub{font-size:10.5px;font-weight:600;color:var(--ink3);font-family:var(--mono);margin-left:auto}
+  .domain .role{font-size:11.5px;color:var(--ink3);margin:4px 0 10px}
+  .domain ul{list-style:none;display:grid;gap:6px}
+  .domain li{font-size:12px;color:var(--ink2);line-height:1.5;padding-left:14px;position:relative}
+  .domain li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:#cbd5e1}
+  .domain.loop li::before{background:#adc6ff}.domain.pool li::before{background:#d3adf7}
+  .domain li b{color:var(--ink);font-weight:600}
+  .domain .subcard{margin-top:10px;border-top:1px dashed var(--line);padding-top:9px}
+  .domain .subcard .st{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:5px}
+  .rail{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 8px 2px;position:relative}
+  .rail::before{content:"";position:absolute;top:16px;bottom:16px;left:50%;border-left:2px dashed #cbd5e1}
+  .rail .arrow{font-size:16px;color:var(--ink3);background:#fff;padding:2px 0;z-index:2}
+  .rail .chip{z-index:2;background:#fff;border:1px solid var(--line);border-radius:8px;font-size:10px;line-height:1.35;color:var(--ink2);text-align:center;padding:4px 6px;width:100%}
+  .rail .chip b{display:block;font-size:10px;color:var(--b2);font-weight:700}
+  .rail .rlabel{position:absolute;top:-2px;left:50%;transform:translateX(-50%);background:var(--bg);font-size:9.5px;font-weight:700;color:var(--ink3);letter-spacing:.05em;white-space:nowrap;padding:0 4px}
+  .callout{margin-top:14px;border-left:3px solid var(--b1);background:#f0f5ff;border-radius:0 10px 10px 0;padding:11px 14px;font-size:12.5px;color:var(--ink2)}
+  .callout b{color:var(--b1);font-weight:700}
+  .callout code{background:#fff}
+
+  .facts{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+  .facts h3{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:600;margin-bottom:11px}
+  .facts ol{list-style:none;display:grid;gap:9px}
+  .facts li{display:flex;gap:11px;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .facts .fn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 6px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+  .facts li b{color:var(--ink);font-weight:600}
+
+  table.cmp{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+  table.cmp th,table.cmp td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  table.cmp th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  table.cmp td:first-child{color:var(--ink);font-weight:600;width:20%}
+  table.cmp .inc{display:inline-block;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px;margin-left:4px;vertical-align:middle}
+  table.cmp .inc.gray{background:var(--warnbg);color:var(--warn);border:1px solid #ffbb96}
+  table.cmp .inc.fb{background:#e6f4ff;color:#0958d9;border:1px solid #91caff}
+  table.cmp .inc.off{background:#f5f5f5;color:var(--ink3);border:1px solid #e0e0e0}
+  table.cmp .inc.on{background:#f6ffed;color:#389e0d;border:1px solid #b7eb8f}
+
+  .finding{border-left:3px solid var(--warn);background:#fff9f5;border-radius:0 10px 10px 0;padding:12px 15px;font-size:13px;color:var(--ink2);margin-top:4px}
+  .finding b{color:var(--warn)}
+  .finding ul{margin:8px 0 0 0;padding-left:18px;display:grid;gap:8px}
+  .finding code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .finding .gap{display:inline-block;font-size:10.5px;font-weight:700;color:#fff;background:var(--warn);border-radius:5px;padding:1px 6px;margin-right:6px}
+  .finding .gap.pending{background:#fa8c16}
+
+  /* ---------------- 时序图 ---------------- */
+  .seqwrap{overflow-x:auto;padding-bottom:4px}
+  .seq{position:relative;min-width:1010px}
+  .ph{position:absolute;top:0;transform:translateX(-50%);background:#fff;border:1px solid var(--line);
+      border-radius:9px;padding:7px 6px;text-align:center;line-height:1.25;z-index:4}
+  .ph b{display:block;font-size:11.5px;font-weight:700}
+  .ph span{display:block;font-size:9.5px;color:var(--ink3);font-family:var(--mono);margin-top:1px}
+  .ph.actor{border-color:#adc6ff;color:var(--b1);box-shadow:0 0 0 3px #eef4ff}
+  .ll{position:absolute;border-left:1.5px dashed #d6dae0;z-index:1}
+  .step{position:absolute;left:0;width:30px;text-align:right;z-index:5}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .step.grp .n{background:var(--b1);color:#fff}
+  .gbracket{position:absolute;left:33px;border-left:2px solid #cfd6df;border-radius:2px}
+  .gband{position:absolute;right:0;background:#f0f5ff;border:1px solid #d6e4ff;color:var(--b1);border-radius:7px;
+    font-size:11.5px;font-weight:700;padding:5px 11px;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .noteband{position:absolute;right:8px;background:#fafbfc;border:1px dashed #d6dae0;border-radius:8px;font-size:11.5px;
+    color:var(--ink2);padding:6px 11px;line-height:1.45;overflow:hidden;z-index:2}
+  .noteband b{color:var(--ink);font-weight:600}
+  .noteband code{font-family:var(--mono);font-size:11px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .msg{position:absolute;z-index:3}
+  .msg .lbl{position:absolute;left:8px;right:8px;bottom:8px;font-size:11px;color:var(--ink2);line-height:1.28;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .msg .lbl b{color:var(--ink);font-weight:600}
+  .msg .line{position:absolute;bottom:4px;left:0;right:0;height:0;border-top:2.2px solid #6b7280}
+  .msg .line::after{content:"";position:absolute;top:-5.5px;border:5.5px solid transparent}
+  .msg.fwd .line::after{right:-1px;border-left-color:#6b7280}
+  .msg.back .line::after{left:-1px;border-right-color:#6b7280}
+  .msg.ret .line{border-top-style:dashed;border-top-width:1.8px;border-top-color:#9aa4b2}
+  .msg.ret.fwd .line::after{border-left-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .msg.ret.back .line::after{border-right-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .legend{margin-top:14px;font-size:11.5px;color:var(--ink3);display:flex;gap:18px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:12px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg-solid{display:inline-block;width:26px;border-top:2.2px solid #6b7280}
+  .lg-dash{display:inline-block;width:26px;border-top:2px dashed #9aa4b2}
+  .lg-note{display:inline-block;width:26px;height:11px;border:1px dashed #cbd5e1;background:#fafbfc;border-radius:3px}
+  .lg-gut{display:inline-block;width:20px;height:12px;border-radius:4px;background:var(--b1)}
+  footer{margin-top:32px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px 18px}
+  footer code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  @media(max-width:960px){body{padding:22px 14px 44px}.panel{padding:16px 15px}.phead .src{margin-left:0;width:100%}
+    .arch{grid-template-columns:1fr}.rail{flex-direction:row;flex-wrap:wrap;justify-content:flex-start;padding:10px 0}
+    .rail::before{display:none}.rail .arrow{display:none}.rail .rlabel{position:static;transform:none;padding:0;margin-right:2px}
+    .rail .chip{width:auto}}
+  @media(max-width:720px){
+    table.cmp thead{display:none}
+    table.cmp tr{display:block;border-bottom:1px solid var(--line);padding:9px 0}
+    table.cmp td{display:block;border:none;padding:2px 0;width:auto!important}
+    table.cmp td::before{content:attr(data-label) "：";color:var(--ink3);font-size:10.5px;font-weight:600;letter-spacing:.04em}
+    table.cmp td:first-child{font-size:14px;margin-bottom:3px}
+  }
+  @media print{body{background:#fff;padding:0}.panel{box-shadow:none;break-inside:avoid}@page{margin:12mm}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Python 工程可靠性与资源管理：事件循环，线程池，ONNX 与护栏
+      <small>BugVault · 链路 12 · 运行时资源边界图 + 一次调用的跨边界时序图</small>
+    </h1>
+    <p class="lede">两条执行域的分工：<b>asyncio 事件循环</b>只跑 MCP 协议与轻量编排，<b>ThreadPoolExecutor（<code>bugvault-io</code>，<code>max_workers=2</code>）</b>承载 LanceDB 与 ONNX 等同步阻塞 IO。图上每个类名、字段名、函数名、行号都来自当前代码；<b>需要运行才能确认的数字标「待核验」</b>，本页不启动服务、不加载模型。</p>
+    <nav class="top">
+      <a href="show-me-index.html">&larr; 图纸索引</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a href="show-me-11-eval-credibility.html">11 评测可信度</a>
+      <a class="on" href="show-me-12-runtime-reliability.html">12 运行时资源边界</a>
+    </nav>
+  </header>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">图 A — 运行时资源边界图（两条执行域）</span><span class="tag">Structure</span><span class="src">main.py:41–44 · tools.py · config.py:40</span></div>
+    <p class="pdesc">中间虚线是进程内唯一的异步/同步边界：事件循环域只能通过 <code>run_in_executor</code> 或 <code>create_task</code> 触达线程池域，绝不直接同步跑 LanceDB 或 ONNX。左右两域同属一个进程。</p>
+    <div class="arch">
+      <div class="domain loop">
+        <h3><span class="dot"></span>asyncio 事件循环<span class="sub">单线程</span></h3>
+        <div class="role">MCP 协议 + 轻量编排</div>
+        <ul>
+          <li><b>stdio_server()</b> 读写 JSON-RPC 帧，<code>Server.run</code> 处理握手（<code>main.py:78–95</code>）</li>
+          <li><b>handle_list_tools / handle_call_tool</b> 工具入口（<code>tools.py:236，306</code>）</li>
+          <li><b>set_trace_id()</b> 生成 trace，写 entry/exit JSONL 与 stderr 日志（<code>tools.py:310，314–320</code>）</li>
+          <li><b>await run_in_executor(...)</b> 提交阻塞活并让出控制权（<code>tools.py:440，630</code>）</li>
+          <li><b>asyncio.create_task(...)</b> 调度后台持久化，不 await（<code>tools.py:448–455</code>）</li>
+          <li><b>await rag_evaluator.evaluate(...)</b> 外部 Judge 是异步 HTTP（<code>tools.py:566–570</code>）</li>
+        </ul>
+      </div>
+      <div class="rail">
+        <span class="rlabel">跨边界</span>
+        <span class="arrow">&#8644;</span>
+        <span class="chip"><b>检索</b>run_in_executor</span>
+        <span class="chip"><b>保存校验</b>run_in_executor</span>
+        <span class="chip"><b>后台持久化</b>run_in_executor</span>
+        <span class="chip"><b>反射工具</b>run_in_executor</span>
+        <span class="chip"><b>后台保存</b>create_task</span>
+      </div>
+      <div class="domain pool">
+        <h3><span class="dot"></span>ThreadPoolExecutor<span class="sub">bugvault-io</span></h3>
+        <div class="role">同步 LanceDB 与 ONNX 推理</div>
+        <ul>
+          <li><b>同步 LanceDB</b>：向量 ANN、FTS(BM25)、<code>upsert_record</code> / <code>upsert_chunks</code>、回查父记录</li>
+          <li><b>ONNX 推理</b>：embedding 批量编码、Cross-Encoder 精排</li>
+          <li><b>本地 IO</b>：写 Markdown 归档、Graph 投影</li>
+          <li><b>反射工具</b>：ReflectionService 同步调用（<code>tools.py:364–370</code>）</li>
+        </ul>
+        <div class="subcard">
+          <div class="st">线程池参数</div>
+          <ul>
+            <li><code>max_workers</code> = <code>settings.thread_pool_workers</code>，默认 <b>2</b>（<code>config.py:40</code>；<code>.env:37</code> 该键被注释，默认生效）</li>
+            <li><code>thread_name_prefix</code> = <b>"bugvault-io"</b>（<code>main.py:43</code>）</li>
+            <li>并发上限 <b>2</b>；第 3 个并发阻塞活进入内部队列等待空闲线程。排队顺序由 CPython <code>ThreadPoolExecutor</code> 的 <code>SimpleQueue</code> 决定，<b>顺序性待核验</b></li>
+            <li>该 executor 为进程内共享单例：检索、保存校验、后台持久化、反射 <b>争用同一 2 个线程</b>，不是水平扩展</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="callout"><b>为什么阻塞 IO 不能留在事件循环：</b>LanceDB 查询、ONNX 推理和文件写入都是同步阻塞调用。asyncio 事件循环是<b>单线程</b>的，一旦在协程里直接调用它们，整个循环会被占住，正在等待的 stdio 协议帧（含 <code>initialize</code> 握手与其他工具调用）都无法推进。把阻塞段用 <code>run_in_executor</code> 推给线程池后，事件循环只保留 <code>await</code>，可继续处理其他请求。</div>
+  </section>
+
+  <section class="panel p2">
+    <div class="phead"><span class="pt">图 B — 跨边界调用清单</span><span class="tag pur">Call list</span><span class="src">tools.py · retrieval_svc.py · persistence_svc.py</span></div>
+    <p class="pdesc">所有从事件循环进入线程池的入口；<code>create_task</code> 分工不同，它只调度、不等待。</p>
+    <table class="cmp">
+      <thead><tr><th>调用</th><th>边界方式</th><th>代码位置</th><th>线程内做什么</th></tr></thead>
+      <tbody>
+        <tr><td data-label="调用">检索</td><td data-label="边界方式"><code>run_in_executor</code></td><td data-label="代码位置"><code>tools.py:621–630</code>（<code>_retrieve_records</code>）</td><td data-label="线程内做什么"><code>RetrievalModule.retrieve</code>：embedding + 向量 ANN + FTS + RRF + 可选 CE</td></tr>
+        <tr><td data-label="调用">保存校验</td><td data-label="边界方式"><code>run_in_executor</code></td><td data-label="代码位置"><code>tools.py:437–440</code></td><td data-label="线程内做什么"><code>prepare_bug</code> / <code>prepare_convention</code>：Pydantic 校验 + 写 Markdown 归档</td></tr>
+        <tr><td data-label="调用">后台持久化</td><td data-label="边界方式"><code>run_in_executor</code></td><td data-label="代码位置"><code>tools.py:463</code></td><td data-label="线程内做什么"><code>persistence.persist</code>：embed + upsert 父记录/chunks + 图投影</td></tr>
+        <tr><td data-label="调用">反射工具</td><td data-label="边界方式"><code>run_in_executor</code></td><td data-label="代码位置"><code>tools.py:364–370</code></td><td data-label="线程内做什么"><code>_sync_reflect(reflection_svc, arguments)</code></td></tr>
+        <tr><td data-label="调用">后台保存</td><td data-label="边界方式"><code>asyncio.create_task</code></td><td data-label="代码位置"><code>tools.py:448–455</code></td><td data-label="线程内做什么">不阻塞：协程立刻返回，后台再进线程池</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">图 C — 一次调用的跨边界时序图（保存 + 检索）</span><span class="tag">Sequence</span><span class="src">tools.py:306–468，518–630</span></div>
+    <p class="pdesc">左侧数字 = 九个步骤，解释见下方脚注；灰带是模块内部动作（不跨进程/不跨线程）。移动端可横向滑动。保存路径<b>先返回「已保存」</b>，检索路径在<b>线程池内完成确定性排序</b>后再返回。</p>
+    <div class="seqwrap"><div class="seq" id="seqMain"></div></div>
+    <div class="legend">
+      <span><i class="lg-solid"></i>调用</span>
+      <span><i class="lg-dash"></i>返回</span>
+      <span><i class="lg-note"></i>模块内部步骤（文字说明）</span>
+      <span><i class="lg-gut"></i>左侧九步步号</span>
+    </div>
+    <div class="facts">
+      <h3>步骤说明（按左侧序号对照）</h3>
+      <ol>
+        <li><span class="fn">1</span><span><b>进入事件循环：traceId + entry 日志。</b>客户端调用 <code>save_bug_experience</code>（或 <code>save_convention</code>）进入 <code>handle_call_tool</code>（<code>tools.py:306</code>）。先 <code>set_trace_id()</code> 生成 12 位 hex trace 并写入 ContextVar（<code>tools.py:310</code>，<code>logger.py:32</code>，<code>get_trace_id:42</code>），再构造 <code>AiCallLogEntry(event_type="entry")</code> 写 JSONL 与 stderr 日志（<code>tools.py:314–320</code>）。</span></li>
+        <li><span class="fn">2</span><span><b>跨边界① 保存校验：run_in_executor(prepare)。</b><code>await loop.run_in_executor(executor, prepare, arguments)</code>（<code>tools.py:437–440</code>）。<code>prepare</code> 是 <code>persistence.prepare_bug</code> / <code>prepare_convention</code>（<code>tools.py:427–435</code>）。线程内先 <code>record_factory(**arguments)</code> 做 Pydantic 校验，缺必填字段返回 <code>PreparedRecord(is_draft=True)</code>；校验通过后写 Markdown 归档，<b>归档失败非致命</b>（<code>logger.exception("Failed to archive ...")</code>，<code>persistence_svc.py:139–155</code>）。</span></li>
+        <li><span class="fn">3</span><span><b>先返回「已保存」：调度后台，不 await。</b>仅当 <code>prepared.record</code> 非空、非 draft、<code>enable_async_embedding=True</code> 且 <code>embedding_svc is not None</code> 时，调 <code>asyncio.create_task(_persist_record_in_background(...))</code>（<code>tools.py:441–455</code>），随后立即 <code>return _present_save_outcome(prepared)</code>（<code>tools.py:457</code>）。此时向量索引<b>尚未写入</b>。返回文案由 <code>_present_save_outcome</code> 生成：「... saved successfully」（<code>tools.py:470–517</code>）。</span></li>
+        <li><span class="fn">4</span><span><b>跨边界③ 后台持久化：run_in_executor(persist)。</b>后台协程 <code>_persist_record_in_background</code> 内 <code>await loop.run_in_executor(executor, persistence.persist, record)</code>（<code>tools.py:460–463</code>）。<code>persist</code> 先 <code>embed(record)</code> 得到父向量与 chunk 向量，触发 embedding 懒加载：<code>_ensure_model()</code> 双检锁（<code>embedding_svc.py:67–80</code>）后 <code>_init_model()</code> 加载 ONNX 并 <code>list(self._model.embed(["warmup"]))</code> <b>热启</b>，避免首次真实推理吃 500ms+ 冷启（<code>embedding_svc.py:46–65</code>）。</span></li>
+        <li><span class="fn">5</span><span><b>写库 + 图投影（可选）。</b>线程内 <code>upsert_record(table_row)</code> 与 <code>upsert_chunks(chunk_rows)</code>，再 <code>_project_graph</code>（<code>persistence_svc.py:114–120</code>）。图投影异常被吞成 <b>非致命</b>（<code>persistence_svc.py:158–165</code>）；<code>write_bug_graph_edges</code> 内部在 <code>graph_db is None</code> 时直接返回。<b>后台任务整体失败只 <code>logger.exception</code>，不反向失败本次调用</b>（<code>tools.py:464–468</code>）。</span></li>
+        <li><span class="fn">6</span><span><b>检索进入：跨边界② run_in_executor(retrieve)。</b><code>retrieve_bug_experience(query)</code> → <code>_handle_retrieve</code>（<code>tools.py:518</code>）→ <code>_retrieve_records</code> 内 <code>await loop.run_in_executor(executor, retrieval.retrieve, request)</code>（<code>tools.py:621–630</code>）。</span></li>
+        <li><span class="fn">7</span><span><b>线程池内：双路召回 + RRF。</b><code>RetrievalModule.retrieve</code>（<code>retrieval_svc.py:66</code>）先 <code>generate_embedding(query)</code>，在 <code>bugvault_chunks</code> 做向量 ANN 与 FTS(BM25) 两路召回，<code>rrf_fusion(k=60)</code> 融合（<code>retrieval_svc.py:87–99，326</code>）。<b>FTS 失败→vector-only</b>（<code>retrieval_svc.py:180–181，200–201</code>）。</span></li>
+        <li><span class="fn">8</span><span><b>Cross-Encoder 精排（可选）。</b><code>enable_reranker=True</code> 时 <code>self._get_reranker()</code> 取模块级单例并 <code>rerank(query, ranked)</code>（<code>retrieval_svc.py:100–109，240–245</code>）；<code>get_reranker</code> 懒加载，初始化失败返回 <code>None</code>（<code>reranker_svc.py:18–33，88–94</code>）。<b>CE 失败→保留 RRF 序</b>（<code>retrieval_svc.py:108–109</code>，<code>reranker_svc.py:70–72</code>）。</span></li>
+        <li><span class="fn">9</span><span><b>可选 RAG 评测 → 返回文本。</b>检索结果返回事件循环后，如 <code>rag_evaluator.enabled</code> 且 <code>eval_depth != "none"</code>，<code>await rag_evaluator.evaluate(...)</code> 追加评分（<code>tools.py:556–572</code>）；<b>评测异常只跳过评分，结果照常返回</b>（<code>tools.py:573–575</code>）。最后返回格式化文本。</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="panel p4">
+    <div class="phead"><span class="pt">图 D — ONNX 与图资源管理（懒加载，单例，并发保护）</span><span class="tag pur">Resources</span><span class="src">embedding_svc.py · reranker_svc.py · graph_db.py:27–40</span></div>
+    <table class="cmp">
+      <thead><tr><th>资源</th><th>持有方式</th><th>懒加载与并发保护</th><th>失败行为</th></tr></thead>
+      <tbody>
+        <tr><td data-label="资源">Embedding（ONNX）</td><td data-label="持有方式">实例字段 <code>self._model</code>（<code>embedding_svc.py:25</code>）</td><td data-label="懒加载与并发保护"><code>_ensure_model()</code> 双检锁：先无锁判空，再 <code>with self._model_lock</code> 二次判空后 <code>_init_model()</code>；<code>_init_model</code> 内 <code>list(model.embed(["warmup"]))</code> 热启 ONNX 图（<code>:26，46–65，67–80</code>）</td><td data-label="失败行为">加载异常照常抛出，由调用方（线程池任务）捕获/降级</td></tr>
+        <tr><td data-label="资源">Cross-Encoder</td><td data-label="持有方式">模块级单例 <code>_reranker_instance</code>（<code>reranker_svc.py:18</code>）</td><td data-label="懒加载与并发保护"><code>get_reranker()</code> 首次调用构造；<code>CrossEncoderReranker._ensure_model()</code> 再懒加载 ONNX 模型（<code>:21–33，88–94</code>）</td><td data-label="失败行为">构造抛错→<code>logger.exception</code> 并返回 <code>None</code>，检索退化为 RRF 序（<code>:27–32</code>）</td></tr>
+        <tr><td data-label="资源">Graph（LadybugDB）</td><td data-label="持有方式">模块级单例 <code>_graph_instance</code>（<code>graph_db.py:27</code>）</td><td data-label="懒加载与并发保护"><code>get_graph_db()</code> 构造并 <code>initialize()</code>，非懒加载字段，但只在启动时初始化一次（<code>:30–40</code>）</td><td data-label="失败行为">初始化抛错→<code>logger.exception("... non-fatal")</code> 并返回 <code>None</code>，跳过图投影（<code>:37–39</code>）</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><b>为什么 embedding 必须懒加载：</b>模型构造可能读本地 FastEmbed 缓存或尝试联网下载。若放在启动路径，<code>initialize</code> 握手会因缓存不全或断网而挂起；懒加载让 stdio 握手先完成，把加载错误留到真正调用工具时才抛出（<code>embedding_svc.py:67–76</code> 动机注释）。</div>
+  </section>
+
+  <section class="panel p4">
+    <div class="phead"><span class="pt">图 E — 四项可观测护栏</span><span class="tag ok">Guardrails</span><span class="src">observability.py · logger.py · error_code.py</span></div>
+    <div class="kv">
+      <span class="k">① traceId 贯穿</span><span class="v"><code>set_trace_id()</code> 生成 UUID 前 12 位并写入 <code>ContextVar</code>（<code>logger.py:32–38</code>）；<code>TraceIdFilter</code> 把 trace 注入每条日志（<code>logger.py:52–66</code>）；工具入口调用 <code>set_trace_id()</code>（<code>tools.py:310</code>）</span>
+      <span class="k">② 稳定错误码分类</span><span class="v"><code>ErrorCode(str, Enum)</code> 定义 <code>ok / rate_limited / timeout / auth_fail / content_safety / parse_error / validation_error / internal / not_found / quota_exceeded</code>（<code>error_code.py</code>）；<code>_classify_error(exc)</code> 按异常类型与消息归类（<code>observability.py:217–235</code>），入口捕获后写入 exit 日志（<code>tools.py:391–399</code>）</span>
+      <span class="k">③ JSONL 调用日志</span><span class="v"><code>AiCallLogEntry</code>（<code>observability.py:77–122</code>）每次调用写 <b>entry + exit 各一行</b>；<code>append_ai_call_log</code> 追加落盘（<code>observability.py:132–140</code>）；路径 <code>_get_log_path()</code> = <code>{data_root}/log/ai_call.jsonl</code>（<code>observability.py:126–130</code>）</span>
+      <span class="k">④ token 成本估算</span><span class="v"><code>estimate_cost(model, prompt_tokens, completion_tokens)</code> 按 <code>_MODEL_PRICING</code>（USD/1M tokens）计价，未命中走 <code>__default__=(2.00, 8.00)</code>，结果 <code>round(cost, 6)</code>（<code>observability.py:52–73</code>）</span>
+    </div>
+    <p class="pdesc" style="margin-top:12px">日志落盘：<code>{data_root}/log/ai_call.jsonl</code>，其中 <code>data_root</code> 默认 <code>~/.bugvault</code>（<code>config.py:19，71–77</code>；<code>.env:10</code> 该键被注释）。</p>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">图 F — 降级与容错（失败不致命）</span><span class="tag ok">Degradation</span><span class="src">retrieval_svc.py · persistence_svc.py · tools.py</span></div>
+    <table class="cmp">
+      <thead><tr><th>故障点</th><th>触发条件</th><th>降级行为</th><th>代码位置</th></tr></thead>
+      <tbody>
+        <tr><td data-label="故障点">FTS 索引/查询失败</td><td data-label="触发条件">FTS 未启用或查询抛异常</td><td data-label="降级行为">退回 vector-only 结果，记录 warning <span class="inc fb">vector-only</span></td><td data-label="代码位置"><code>retrieval_svc.py:171–201</code></td></tr>
+        <tr><td data-label="故障点">Cross-Encoder 失败</td><td data-label="触发条件">CE 初始化或推理抛异常</td><td data-label="降级行为">保留 RRF 排序结果 <span class="inc fb">RRF 序</span></td><td data-label="代码位置"><code>retrieval_svc.py:100–109</code>；<code>reranker_svc.py:64–72</code></td></tr>
+        <tr><td data-label="故障点">Graph 初始化失败</td><td data-label="触发条件"><code>get_graph_db()</code> 构造/初始化抛异常</td><td data-label="降级行为">返回 <code>None</code>，跳过图投影，主存储不受影响 <span class="inc gray">非致命</span></td><td data-label="代码位置"><code>graph_db.py:30–40</code>；<code>persistence_svc.py:158–165</code></td></tr>
+        <tr><td data-label="故障点">RAG 评测异常</td><td data-label="触发条件">Judge LLM 调用/解析失败</td><td data-label="降级行为">跳过评分，检索结果照常返回 <span class="inc fb">跳过评分</span></td><td data-label="代码位置"><code>tools.py:556–575</code></td></tr>
+        <tr><td data-label="故障点">Markdown 归档失败</td><td data-label="触发条件">写文件抛异常</td><td data-label="降级行为">记录 <code>non-fatal</code>，仍返回非 draft 记录，后台继续写向量 <span class="inc gray">非致命</span></td><td data-label="代码位置"><code>persistence_svc.py:152–155</code></td></tr>
+        <tr><td data-label="故障点">后台持久化失败</td><td data-label="触发条件">embed/upsert 抛异常</td><td data-label="降级行为">只 <code>logger.exception</code>，不反向失败本次调用 <span class="inc gray">非致命</span></td><td data-label="代码位置"><code>tools.py:460–468</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel p5">
+    <div class="phead"><span class="pt">图 G — stdio 安全：stdout_guard 在 import 期安装</span><span class="tag warn">Transport</span><span class="src">main.py:24 · stdout_guard.py</span></div>
+    <p class="pdesc">MCP stdio transport 用 <code>stdout</code> 传 JSON-RPC 帧，因此第三方库任何 <code>print()</code> / tqdm 进度条都会污染协议通道。</p>
+    <div class="kv">
+      <span class="k">安装时机</span><span class="v"><code>main.py:24</code> 在 <b>任何第三方库之前</b> <code>from bugvault.utils.stdout_guard import _MCPStdoutProxy</code>；模块底部 <code>if not isinstance(sys.stdout, _MCPStdoutProxy): sys.stdout = _MCPStdoutProxy(sys.stdout)</code>（<code>stdout_guard.py:72–73</code>），导入即生效</span>
+      <span class="k">tqdm 防护</span><span class="v">import 期设置 <code>os.environ["TQDM_DISABLE"]="1"</code>，禁止进度条输出（<code>stdout_guard.py:20</code>）</span>
+      <span class="k">写过滤</span><span class="v"><code>_MCPStdoutProxy.write()</code> 只放行以 <code>Content-Length:</code> 或 <code>{</code> 开头的内容；其余静默丢弃并写 stderr 调试信息（<code>stdout_guard.py:57–69</code>）</span>
+      <span class="k">兼容性</span><span class="v">代理把 <code>.buffer / .fileno() / .readable() / .encoding</code> 委托给原 stdout，保证 <code>anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, ...))</code> 可用（<code>stdout_guard.py:33–55</code>）</span>
+    </div>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">开关状态与默认值</span><span class="tag">config.py</span><span class="src">config.py:40–67</span></div>
+    <div class="kv">
+      <span class="k">settings.thread_pool_workers</span><span class="v"><b>2</b> — 线程池上限（<code>config.py:40</code>）<span class="inc on">默认生效</span></span>
+      <span class="k">settings.enable_async_embedding</span><span class="v"><b>True</b> — 开启异步索引，即保存后 <code>create_task</code> 后台持久化（<code>config.py:47</code>）</span>
+      <span class="k">settings.enable_fts</span><span class="v"><b>True</b> — FTS 双路召回（<code>config.py:57</code>）</span>
+      <span class="k">settings.enable_reranker</span><span class="v"><b>True</b> — Cross-Encoder 精排（<code>config.py:60</code>）</span>
+      <span class="k">settings.enable_reflection_tool</span><span class="v"><b>True</b> — 暴露第 5 个反射工具（<code>config.py:67</code>）</span>
+      <span class="k">settings.enable_rag_eval</span><span class="v"><b>False</b> — 代码默认关闭；本仓库 <code>.env:43</code> 将其覆盖为 <code>true</code>，属于环境配置 <span class="inc gray">默认值以代码为准</span>（<code>config.py:50</code>）</span>
+    </div>
+  </section>
+
+  <section class="panel p5">
+    <div class="phead"><span class="pt">已知落差（文档与代码不一致，以代码为准）</span><span class="tag warn">Gaps</span><span class="src">README §12 · 工单 · tests/</span></div>
+    <div class="finding">
+      <ul>
+        <li><span class="gap">落差 1</span><b>并发上限是硬编码默认，不是可水平扩展。</b><code>thread_pool_workers=2</code> 只是 <code>config.py:40</code> 的默认值，executor 在线程池参数中<b>（默认 2）</b>固定 2 个线程，高并发下第 3 个阻塞活排队；图纸不暗示可横向扩展。</li>
+        <li><span class="gap">落差 2</span><b>异步索引无完成回执。</b>保存链路先 <code>return</code>「saved successfully」再跑后台 <code>persist</code>（<code>tools.py:448–468</code>）；后台成功或失败都不改变调用方响应，向量索引最终一致。<b>「已保存」不代表「已可检索」。</b></li>
+        <li><span class="gap">落差 3</span><b>仓库无 CI、无 lint/format 定义。</b><code>pyproject.toml</code> 只有 <code>hatchling</code> 构建、运行依赖与 <code>[tool.pytest.ini_options]</code>，没有 <code>[tool.ruff]</code> / <code>[tool.black]</code>，仓库内无 <code>.github/</code> 或 pre-commit 配置。</li>
+        <li><span class="gap">落差 4</span><b>归档测试隔离不彻底（名称与行为不符）。</b><code>tests/test_core.py:347–357</code> 的 <code>TestWriteMarkdownArchive.test_write_to_temp_dir(self, tmp_path)</code> <b>接收 <code>tmp_path</code> 却未使用</b>，直接调 <code>write_markdown_archive(record)</code>；该函数无目标目录参数，写入 <code>settings.markdown_archive_dir</code>（真实 <code>~/.bugvault/archive</code>，<code>archive_svc.py:126–133</code>）。测试名说 temp，实际写真实数据目录。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>证据精确到 <code>文件:行号</code>，以代码为准。</span>
+    <span>本会话只读代码与文档：不运行 pytest/benchmark、不启动服务、不加载嵌入模型。</span>
+    <span>需运行确认的数字标「待核验」。</span>
+    <span>产出：<code>docs/show-me-12-runtime-reliability.html</code></span>
+  </footer>
+</div>
+<script>
+(function(){
+  var ACTORS=[
+    {k:'client',name:'MCP Client',sub:'客户端调用方'},
+    {k:'loop',name:'asyncio 事件循环',sub:'handle_call_tool · tools.py'},
+    {k:'pool',name:'ThreadPoolExecutor',sub:'bugvault-io · max_workers=2'},
+    {k:'svc',name:'服务层',sub:'RecordPersistence / RetrievalModule'},
+    {k:'res',name:'ONNX 与图资源',sub:'EmbeddingService / CrossEncoder / GraphDB'}
+  ];
+  var GROUPS=[
+    {n:1,title:'调用进入事件循环：set_trace_id + entry 日志',rows:[
+      {t:'msg',from:'client',to:'loop',kind:'req',label:'save_bug_experience(arguments)'},
+      {t:'note',label:'<b>set_trace_id()</b> 生成 12 位 hex 写入 ContextVar（tools.py:310，logger.py:32）；写 entry JSONL 与 stderr 日志（tools.py:314–320）'}
+    ]},
+    {n:2,title:'跨边界 ① 保存校验：run_in_executor(prepare)',rows:[
+      {t:'msg',from:'loop',to:'pool',kind:'req',label:'loop.run_in_executor(executor, prepare, arguments)（tools.py:437–440）'},
+      {t:'msg',from:'pool',to:'svc',kind:'req',label:'prepare_bug / prepare_convention'},
+      {t:'note',label:'Pydantic 校验；缺字段→draft；写 Markdown 归档（失败非致命）。persistence_svc.py:139–155'}
+    ]},
+    {n:3,title:'先返回「已保存」：调度后台，不 await',rows:[
+      {t:'msg',from:'loop',to:'client',kind:'ret',label:'"saved successfully"，此时向量索引尚未写入'},
+      {t:'note',label:'<b>asyncio.create_task(_persist_record_in_background)</b> 已调度（tools.py:441–455）；主协程立即 return（tools.py:457）'}
+    ]},
+    {n:4,title:'跨边界 ③ 后台持久化：run_in_executor(persist)',rows:[
+      {t:'msg',from:'pool',to:'svc',kind:'req',label:'persistence.persist(record)（tools.py:463）'},
+      {t:'msg',from:'svc',to:'res',kind:'req',label:'embed() 触发 embedding 懒加载'},
+      {t:'note',label:'<b>_ensure_model()</b> 双检锁 + <b>_init_model()</b> + warmup。embedding_svc.py:46–65，67–80'}
+    ]},
+    {n:5,title:'写入 LanceDB + 图投影（可选）',rows:[
+      {t:'msg',from:'svc',to:'res',kind:'req',label:'upsert_record / upsert_chunks'},
+      {t:'note',label:'_project_graph 失败非致命（persistence_svc.py:158–165）；后台整体失败只 logger.exception，不反向失败本次调用（tools.py:460–468）'}
+    ]},
+    {n:6,title:'检索进入：跨边界 ② run_in_executor(retrieve)',rows:[
+      {t:'msg',from:'client',to:'loop',kind:'req',label:'retrieve_bug_experience(query)'},
+      {t:'msg',from:'loop',to:'pool',kind:'req',label:'run_in_executor(executor, retrieval.retrieve, request)（tools.py:621–630）'}
+    ]},
+    {n:7,title:'线程池内：双路召回 + RRF',rows:[
+      {t:'msg',from:'pool',to:'svc',kind:'req',label:'RetrievalModule.retrieve(request)'},
+      {t:'msg',from:'svc',to:'res',kind:'req',label:'generate_embedding(query)'},
+      {t:'note',label:'向量 ANN + FTS(BM25) → RRF(k=60)（retrieval_svc.py:87–99）；FTS 失败→vector-only（:180–181，200–201）'}
+    ]},
+    {n:8,title:'Cross-Encoder 精排（可选）',rows:[
+      {t:'msg',from:'svc',to:'res',kind:'req',label:'get_reranker().rerank(query, ranked)'},
+      {t:'note',label:'模块级单例懒加载（reranker_svc.py:18–33，88–94）；失败→保留 RRF 序（retrieval_svc.py:108–109）'}
+    ]},
+    {n:9,title:'可选 RAG 评测 → 返回文本',rows:[
+      {t:'msg',from:'loop',to:'client',kind:'ret',label:'格式化结果文本（含评分，若开启）'},
+      {t:'note',label:'rag_evaluator.evaluate() 异常→跳过评分，结果照常返回（tools.py:556–575）'}
+    ]}
+  ];
+
+  var GUTTER=44, TOP=64, HB=30, ROW=54, NOTE=50, GAPG=18;
+  var N=ACTORS.length;
+  function frac(i){return (i+0.5)/N;}
+  function XP(f){return 'calc('+GUTTER+'px + (100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+  function WP(f){return 'calc((100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+
+  var el=document.getElementById('seqMain'), out='', y=TOP, layout=[];
+  GROUPS.forEach(function(g){
+    var h=HB;
+    g.rows.forEach(function(r){h+=(r.t==='note'?NOTE:ROW);});
+    layout.push({g:g,top:y,h:h});
+    y+=h+GAPG;
+  });
+  var H=y+12;
+
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ph'+(i===0?' actor':'')+'" style="left:'+XP(frac(i))+';width:'+WP(0.92/N)+'"><b>'+a.name+'</b><span>'+a.sub+'</span></div>';
+  });
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ll" style="left:'+XP(frac(i))+';top:52px;height:'+(H-68)+'px"></div>';
+  });
+  layout.forEach(function(L){
+    var g=L.g, gy=L.top;
+    out+='<div class="step grp" style="top:'+(gy+4)+'px"><span class="n">'+g.n+'</span></div>';
+    out+='<div class="gbracket" style="top:'+(gy+4)+'px;height:'+(L.h-8)+'px"></div>';
+    out+='<div class="gband" style="top:'+gy+'px;left:'+GUTTER+'px">'+g.title+'</div>';
+    var ry=gy+HB;
+    g.rows.forEach(function(r){
+      if(r.t==='note'){
+        out+='<div class="noteband" style="top:'+(ry+2)+'px;height:'+(NOTE-6)+'px;left:'+(GUTTER+10)+'px">'+r.label+'</div>';
+        ry+=NOTE;
+      } else {
+        var ai=-1,bi=-1;
+        ACTORS.forEach(function(a,idx){if(a.k===r.from)ai=idx;if(a.k===r.to)bi=idx;});
+        var fa=frac(ai),fb=frac(bi),lo=Math.min(fa,fb),wd=Math.abs(fb-fa);
+        var dir=(fb>=fa)?'fwd':'back';
+        var ret=(r.kind==='ret')?' ret':'';
+        out+='<div class="msg'+ret+' '+dir+'" style="left:'+XP(lo)+';width:'+WP(wd)+';top:'+(ry+4)+'px;height:'+(ROW-6)+'px"><div class="line"></div><div class="lbl">'+r.label+'</div></div>';
+        ry+=ROW;
+      }
+    });
+  });
+  el.style.height=H+'px';
+  el.innerHTML=out;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>问题发现与产品边界 · BugVault 定位与边界结构图</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1280px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:22px}
+  h1{font-size:clamp(20px,3vw,27px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-top:6px;text-transform:uppercase}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:96ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;box-shadow:var(--shadow);color:var(--ink2)}
+  nav.top a.on{border-color:var(--b1);color:var(--b1);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;border-left:3px solid var(--pc,var(--b1))}
+  .p1{--pc:var(--b1)}.p2{--pc:var(--b5)}.p3{--pc:var(--b4)}.p4{--pc:var(--warn)}
+  .phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .phead .pt{font-size:15.5px;font-weight:700}
+  .phead .src{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .pdesc{font-size:13px;color:var(--ink2);margin:6px 0 16px}
+  .pdesc code,li code,.fx code,.mcard code,.callout code,.finding code,footer code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+
+  /* 落地程度 / 口径 标记 */
+  .lv{display:inline-block;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 7px;border:1px solid transparent;white-space:nowrap}
+  .lv.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .lv.part{background:#fff7e6;color:#d46b08;border-color:#ffd591}
+  .lv.doc{background:#fafafa;color:#595959;border-color:#e0e0e0}
+  .lv.res{background:#f9f0ff;color:var(--b2);border-color:#d3adf7}
+  .lv.code{background:#e6f4ff;color:#0958d9;border-color:#91caff}
+  .lv.warn{background:var(--warnbg);color:var(--warn);border-color:#ffbb96}
+
+  /* 三栏结构图 */
+  .grid3{display:grid;grid-template-columns:1fr 1.45fr 1fr;gap:16px;align-items:start}
+  @media(max-width:1080px){.grid3{grid-template-columns:1fr}}
+  .col{border:1px solid var(--line);border-radius:14px;background:#fcfcfd;padding:14px}
+  .col.a{border-color:#ffbb96;background:#fff8f5}
+  .col.b{border-color:#adc6ff;background:#f7faff}
+  .col.c{border-color:#b7eb8f;background:#f9fff5}
+  .colhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:0 2px 11px;border-bottom:1px dashed var(--line)}
+  .colhead .ct{font-size:14px;font-weight:700}
+  .colhead .ct .en{display:block;font-size:10px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .colhead .lv{margin-left:auto}
+  .colnote{font-size:11.5px;color:var(--ink3);margin:9px 2px 12px;line-height:1.5}
+  .cards{display:grid;gap:10px}
+  .mcard{background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 12px;box-shadow:var(--shadow)}
+  .col.a .mcard{border-left:3px solid var(--b4)}
+  .col.b .mcard{border-left:3px solid var(--b1)}
+  .col.c .mcard{border-left:3px solid var(--b5)}
+  .mcard .h{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+  .mcard .h .t{font-size:13px;font-weight:700;color:var(--ink)}
+  .mcard .h .n{font-family:var(--mono);font-size:10.5px;color:var(--ink3);font-weight:700}
+  .mcard .h .lv{margin-left:auto}
+  .mcard .sub{font-size:11.5px;color:var(--ink3);margin-top:3px}
+  .fx{display:grid;grid-template-columns:auto 1fr;gap:3px 8px;margin-top:8px;font-size:12px;line-height:1.5}
+  .fx .k{font-weight:700;font-size:11px;border-radius:4px;padding:1px 6px;align-self:start;white-space:nowrap}
+  .fx .k.good{background:#f6ffed;color:#389e0d}
+  .fx .k.miss{background:var(--warnbg);color:var(--warn)}
+  .fx .v{color:var(--ink2)}
+  .fx .v b{color:var(--ink);font-weight:600}
+  .msrc{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:9px;padding-top:8px;border-top:1px dashed var(--line2)}
+  .msrc a,.msrc span{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+  .msrc .mk{color:var(--b1);font-weight:700}
+  .tagline{font-size:10.5px;font-family:var(--mono);color:var(--ink3);margin-top:8px}
+
+  /* 落点条 */
+  .foot{background:#fff;border:1px dashed var(--b1);border-radius:11px;padding:11px 12px;margin-top:10px}
+  .foot .t{font-size:12.5px;font-weight:700;color:var(--b1)}
+  .foot .d{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.5}
+
+  /* 定位 callout */
+  .callout{border-left:3px solid var(--b1);background:#f0f5ff;border-radius:0 10px 10px 0;padding:11px 14px;font-size:12.5px;color:var(--ink2);margin-top:10px}
+  .callout b{color:var(--b1);font-weight:700}
+  .callout.warn{border-left-color:var(--warn);background:var(--warnbg)}
+  .callout.warn b{color:var(--warn)}
+
+  /* 责任分工 */
+  .split{display:grid;grid-template-columns:1fr 54px 1fr;gap:0;align-items:stretch}
+  .dom{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff}
+  .dom.client{border-color:#adc6ff;box-shadow:0 0 0 3px #eef4ff}
+  .dom.vault{border-color:#b7eb8f;box-shadow:0 0 0 3px #f6ffed}
+  .dom h4{font-size:13px;font-weight:700;display:flex;gap:8px;align-items:baseline}
+  .dom h4 .lv{margin-left:auto}
+  .dom ul{list-style:none;margin-top:8px;display:grid;gap:5px}
+  .dom li{font-size:12px;color:var(--ink2);padding-left:13px;position:relative}
+  .dom li::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:50%;background:#cbd5e1}
+  .dom.client li::before{background:#adc6ff}.dom.vault li::before{background:#b7eb8f}
+  .dom li b{color:var(--ink);font-weight:600}
+  .rail{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative}
+  .rail::before{content:"";position:absolute;top:12px;bottom:12px;left:50%;border-left:2px dashed #cbd5e1}
+  .rail .arw{font-size:15px;color:var(--ink3);background:#fff;z-index:2;padding:2px 0}
+  .rail .rl{position:absolute;top:0;left:50%;transform:translateX(-50%);background:var(--bg);font-size:9px;font-weight:700;color:var(--ink3);white-space:nowrap;padding:0 3px}
+  @media(max-width:720px){.split{grid-template-columns:1fr}.rail{flex-direction:row;padding:6px 0}.rail::before{display:none}.rail .arw{transform:rotate(0)}}
+
+  /* 不适合场景 */
+  .nogo{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:900px){.nogo{grid-template-columns:1fr}}
+  .ng{border:1px solid #ffbb96;border-radius:11px;background:#fff9f5;padding:12px 13px}
+  .ng .t{font-size:13px;font-weight:700;color:var(--warn)}
+  .ng .d{font-size:12px;color:var(--ink2);margin-top:5px;line-height:1.5}
+  .ng .w{font-size:11px;color:var(--ink3);margin-top:7px;font-family:var(--mono)}
+
+  /* 证据脚注 */
+  .refs ol{list-style:none;counter-reset:r;display:grid;gap:8px}
+  .refs li{counter-increment:r;display:grid;grid-template-columns:30px 1fr;gap:8px;font-size:12px;color:var(--ink2);line-height:1.55}
+  .refs li::before{content:"[" counter(r) "]";font-family:var(--mono);font-size:11px;color:var(--b1);font-weight:700}
+  .refs li b{color:var(--ink);font-weight:600}
+  .refs .s{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+
+  /* 落差 */
+  .finding{border-left:3px solid var(--warn);background:#fff9f5;border-radius:0 10px 10px 0;padding:13px 16px;font-size:12.5px;color:var(--ink2)}
+  .finding h3{font-size:13px;font-weight:700;color:var(--warn);margin-bottom:8px}
+  .finding ul{padding-left:18px;display:grid;gap:9px}
+  .finding b{color:var(--warn)}
+  .finding .g{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--warn);border-radius:5px;padding:1px 6px;margin-right:6px}
+  .finding .g.p{background:var(--b4)}
+  .legend{display:flex;flex-wrap:wrap;gap:7px 14px;font-size:11.5px;color:var(--ink3);margin-top:4px}
+  .legend .it{display:flex;align-items:center;gap:6px}
+  footer{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px 18px}
+  @media(max-width:960px){body{padding:22px 14px 44px}.panel{padding:16px 15px}.phead .src{margin-left:0;width:100%}}
+  @media print{body{background:#fff;padding:0}.panel,.col,.mcard,.ng{box-shadow:none;break-inside:avoid}@page{margin:11mm}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>问题发现与产品边界：痛点，替代方案，边界
+      <small>BugVault · 链路 07 · 定位与边界结构图（非时序图）</small>
+    </h1>
+    <p class="lede">一张左到右的定位卡：<b>为什么需要专用工程记忆（痛点）</b>、<b>为什么不复用既有方案（替代方案对比）</b>、<b>BugVault 明确不做什么（边界）</b>。
+      本图把 <span class="lv code">代码证据</span> 与 <span class="lv doc">文档口径</span> 分开标：无代码证据的结论一律标「文档口径」，不写成「已实现」；需运行确认的数字标「待核验」。
+      本会话只读代码与文档，不跑 <code>pytest</code> 或 benchmark、不启动服务、不加载嵌入模型。所有行号基于当前工作区。</p>
+    <nav class="top">
+      <a href="show-me-index.html">&larr; 图纸索引</a>
+      <a class="on" href="show-me-07-problem-and-boundary.html">07 问题与产品边界</a>
+      <a href="show-me-08-mcp-stdio.html">08 MCP 与客户端集成</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a href="show-me-11-eval-credibility.html">11 评测可信度</a>
+      <a href="show-me-12-runtime-reliability.html">12 运行时资源边界</a>
+    </nav>
+  </header>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">读图约定与落地程度图例</span><span class="src">CONTEXT.md:19–21 · 全景文档:63–68</span></div>
+    <p class="pdesc">每张卡片都带三样东西：一句话结论、<span class="lv">落地程度</span> 标签、可定位到行的来源脚注（点角标看页末「证据来源」）。颜色只表达语义分区，不表达优先级。</p>
+    <div class="legend">
+      <span class="it"><span class="lv ok">已实现</span>当前代码可验证</span>
+      <span class="it"><span class="lv part">部分</span>有实现但产品化冻结</span>
+      <span class="it"><span class="lv doc">文档口径</span>仅文档/问题陈述，无代码</span>
+      <span class="it"><span class="lv res">已调研，未决策</span>读了源码但结论未收敛</span>
+      <span class="it"><span class="lv code">代码证据</span>指向 src/ 的具体行</span>
+      <span class="it"><span class="lv warn">落差</span>文档与代码/文档之间不一致</span>
+    </div>
+  </section>
+
+  <section class="panel p2">
+    <div class="phead"><span class="pt">定位与边界结构图</span><span class="src">三栏：痛点 → 替代方案对比 → 边界</span></div>
+    <p class="pdesc">中间一栏是横向对照，不是 BugVault 的功能清单；右栏三条硬边界直接取自 <code>CONTEXT.md</code> 的 BugVault boundary 原文。</p>
+
+    <div class="grid3">
+
+      <!-- ============ 左栏：痛点 ============ -->
+      <div class="col a">
+        <div class="colhead"><span class="ct">痛点<span class="en">Why memory</span></span><span class="lv doc">文档口径</span></div>
+        <p class="colnote">四条问题来自总纲与事实卡的问题陈述，是对「AI 编程客户端缺什么」的定义，不是可运行功能。</p>
+        <div class="cards">
+          <div class="mcard">
+            <div class="h"><span class="n">A1</span><span class="t">跨会话经验断层</span></div>
+            <div class="sub">Agent 只记得当前会话，不记得昨天踩过的坑与项目约定。</div>
+            <div class="msrc"><span class="mk">[1]</span><a href="#r1">全景文档:36</a><span class="mk">[7]</span><a href="#r7">README:47–53</a></div>
+          </div>
+          <div class="mcard">
+            <div class="h"><span class="n">A2</span><span class="t">已修 Bug 再犯</span></div>
+            <div class="sub">同一问题修好一次，换会话可能重犯；重复 debug、重复 review 成本最高。</div>
+            <div class="msrc"><span class="mk">[1]</span><a href="#r1">全景文档:37</a><span class="mk">[10]</span><a href="#r10">ADR-0001:16</a></div>
+          </div>
+          <div class="mcard">
+            <div class="h"><span class="n">A3</span><span class="t">项目规约反复违反</span></div>
+            <div class="sub">金额单位、ID 类型、目录与测试后缀等约定，落库后仍被反复违反。</div>
+            <div class="msrc"><span class="mk">[1]</span><a href="#r1">全景文档:37</a><span class="mk">[6]</span><a href="#r6">事实卡:17</a></div>
+          </div>
+          <div class="mcard">
+            <div class="h"><span class="n">A4</span><span class="t">规则塞进 prompt 放不下</span></div>
+            <div class="sub">聊天记录不可检索、文档 AI 不主动读、长规则无法常驻上下文。</div>
+            <div class="msrc"><span class="mk">[1]</span><a href="#r1">全景文档:38</a><span class="mk">[13]</span><a href="#r13">分析/02:26–30</a></div>
+          </div>
+        </div>
+        <div class="callout"><b>结论</b>：缺的不是模型能力，而是「每次开工前可自动查询、可积累的项目记忆」。</div>
+        <div class="tagline">来源：[1] 全景文档:40</div>
+      </div>
+
+      <!-- ============ 中栏：替代方案对比 ============ -->
+      <div class="col b">
+        <div class="colhead"><span class="ct">替代方案对比<span class="en">Why not X</span></span><span class="lv doc">外部方案：文档口径</span></div>
+        <p class="colnote">四个既有方案各自解决问题的一部分；「漏了什么」是 BugVault 原以为可差异化的缺口，但 ADR-0001 判定这些缺口不足以构成独立产品。</p>
+        <div class="cards">
+
+          <div class="mcard">
+            <div class="h"><span class="n">B1</span><span class="t">Markdown / 笔记搜索（Git，ADR，docs）</span></div>
+            <div class="fx">
+              <span class="k good">解决了</span><span class="v">被动记录执行反馈足够；小型人工整理库往往「够用」。</span>
+              <span class="k miss">漏了什么</span><span class="v">不可按语义检索，<b>AI 不主动读</b>，跨会话不会自动复用。</span>
+            </div>
+            <div class="msrc"><span class="mk">[10]</span><a href="#r10">ADR-0001:15</a><span class="mk">[1]</span><a href="#r1">全景文档:38</a><span class="mk">[8]</span><a href="#r8">README:31–38</a></div>
+          </div>
+
+          <div class="mcard">
+            <div class="h"><span class="n">B2</span><span class="t">通用记忆 MCP（mem0，mcp-server-memory）</span><span class="lv res">已调研</span></div>
+            <div class="fx">
+              <span class="k good">解决了</span><span class="v">持久化、检索、过滤、记忆生命周期已商品化；配置驱动、可插拔。</span>
+              <span class="k miss">漏了什么</span><span class="v">写入是<b>弱结构</b>，「失败尝试」易被漏掉；通用于所有领域，排障场景不够尖锐。</span>
+            </div>
+            <div class="msrc"><span class="mk">[10]</span><a href="#r10">ADR-0001:13</a><span class="mk">[12]</span><a href="#r12">分析/01:11–15</a><span class="mk">[14]</span><a href="#r14">mem0 阅读:11–30</a></div>
+          </div>
+
+          <div class="mcard">
+            <div class="h"><span class="n">B3</span><span class="t">.cursorrules / Docs（IDE 静态文档）</span></div>
+            <div class="fx">
+              <span class="k good">解决了</span><span class="v">把框架 API 与正确范例前置进上下文，处理「已知规则」有效。</span>
+              <span class="k miss">漏了什么</span><span class="v">依赖<b>人工前置整理</b>；心流中无人主动写，且不会随经验生长。</span>
+            </div>
+            <div class="msrc"><span class="mk">[12]</span><a href="#r12">分析/01:17–21</a><span class="mk">[13]</span><a href="#r13">分析/02:7</a></div>
+          </div>
+
+          <div class="mcard">
+            <div class="h"><span class="n">B4</span><span class="t">Agent Memory Bank（Cline，RooCode）</span></div>
+            <div class="fx">
+              <span class="k good">解决了</span><span class="v">为自治 Agent 追踪架构决策、任务状态与踩坑记录，覆盖全面。</span>
+              <span class="k miss">漏了什么</span><span class="v"><b>过重且强耦合</b>特定 Agent 框架；单点排障检索噪音大、Token 成本高。</span>
+            </div>
+            <div class="msrc"><span class="mk">[12]</span><a href="#r12">分析/01:23–27</a></div>
+          </div>
+
+        </div>
+        <div class="foot">
+          <div class="t">BugVault 的落点 <span class="lv part">部分</span><span class="lv code" style="margin-left:6px">代码证据</span></div>
+          <div class="d">垂直强约束（Bug + Convention 两类记录，强制「失败尝试 / 错误行为」字段）+ 本地 MCP 工具端点。记录与检索已实现；但产品化已冻结：<b>未证明降低返修时间或真实采纳</b>。</div>
+          <div class="msrc"><span class="mk">[4]</span><a href="#r4">CONTEXT.md:3</a><span class="mk">[16]</span><a href="#r16">tools.py:236–310</a><span class="mk">[11]</span><a href="#r11">ADR-0001:32</a></div>
+        </div>
+      </div>
+
+      <!-- ============ 右栏：边界 ============ -->
+      <div class="col c">
+        <div class="colhead"><span class="ct">边界<span class="en">Out of scope</span></span><span class="lv ok">设计约束</span></div>
+        <p class="colnote">三条原文取自 <code>CONTEXT.md</code> 的 BugVault boundary；边界是主动声明的工程判断，不是缺点掩饰。</p>
+        <div class="cards">
+          <div class="mcard">
+            <div class="h"><span class="n">C1</span><span class="t">不做规划</span></div>
+            <div class="sub">不替客户端规划任务、不决定下一步做什么。</div>
+            <div class="msrc"><span class="mk">[3]</span><a href="#r3">CONTEXT.md:19–21</a><span class="mk">[2]</span><a href="#r2">全景文档:65</a></div>
+          </div>
+          <div class="mcard">
+            <div class="h"><span class="n">C2</span><span class="t">不改业务代码</span></div>
+            <div class="sub">不编辑业务代码，只存档与返回候选记忆。</div>
+            <div class="msrc"><span class="mk">[3]</span><a href="#r3">CONTEXT.md:19–21</a><span class="mk">[2]</span><a href="#r2">全景文档:65</a></div>
+          </div>
+          <div class="mcard">
+            <div class="h"><span class="n">C3</span><span class="t">不跑 Agent Loop</span></div>
+            <div class="sub">不驱动工具循环，也不自动触发检索或保存。</div>
+            <div class="msrc"><span class="mk">[3]</span><a href="#r3">CONTEXT.md:19–21</a><span class="mk">[6]</span><a href="#r6">事实卡:28</a></div>
+          </div>
+        </div>
+        <div class="callout"><b>分工</b>：<b>客户端负责推理与决策，BugVault 是记忆端点</b>。客户端决定是否调用、是否采纳返回的指导。</div>
+        <div class="callout warn"><b>客户端跳过调用时 BugVault 无法干预</b>。代码里没有任何强制 preflight/postflight 的入口，价值完全依赖客户端主动调用。</div>
+        <div class="tagline">来源：[3] CONTEXT.md:19–21 · [20] 无强制代码 + 全景文档:67</div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">责任分工：谁推理，谁记忆</span><span class="src">CONTEXT.md:19–21 · 事实卡:28–29</span></div>
+    <div class="split">
+      <div class="dom client">
+        <h4>MCP 客户端<span class="lv code">代码边界</span></h4>
+        <ul>
+          <li>理解任务、<b>规划与推理</b></li>
+          <li>决定<b>是否调用</b>工具、是否采纳返回指导</li>
+          <li><b>修改业务代码</b>、跑 Agent Loop</li>
+          <li>写回预防规则后由客户端指令文件承载</li>
+        </ul>
+      </div>
+      <div class="rail"><span class="rl">协议</span><span class="arw">&#8644;</span><span class="arw">&#8594;</span></div>
+      <div class="dom vault">
+        <h4>BugVault 记忆端点<span class="lv ok">已实现</span></h4>
+        <ul>
+          <li>保存 / 检索 Bug 与 Convention 记录</li>
+          <li>反思并生成预防规则（写回 <code>CLAUDE.md</code>）</li>
+          <li>本地 stdio 端点：<code>data_root=~/.bugvault</code></li>
+          <li><b>不规划、不改码、不跑 Loop</b></li>
+        </ul>
+      </div>
+    </div>
+    <div class="tagline" style="margin-top:9px">来源：[18] main.py:77–81 · [19] config.py:19 · [17] reflection_svc.py:18–57 · [16] tools.py:236–310</div>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">什么场景不适合 BugVault</span><span class="lv doc">文档口径</span><span class="src">全景文档:497–504 · 事实卡:30</span></div>
+    <p class="pdesc">每条都对应「当前是本地 stdio 单用户端点」这一如实状态（全景文档:68，14.1:503）。</p>
+    <div class="nogo">
+      <div class="ng">
+        <div class="t">多人实时共享同一库</div>
+        <div class="d">没有多租户与鉴权；团队共享需自行挂载同一数据目录，无并发写入协调承诺。</div>
+        <div class="w">当前：本地 stdio 单用户端点</div>
+      </div>
+      <div class="ng">
+        <div class="t">跨机器同步</div>
+        <div class="d">数据默认在 <code>~/.bugvault/</code>，无云同步，也没有跨设备一致性协议。</div>
+        <div class="w">当前：本地 stdio 单用户端点</div>
+      </div>
+      <div class="ng">
+        <div class="t">客户端不调用工具</div>
+        <div class="d">若客户端或 Skill 跳过检索 / 保存，BugVault 无法自动干预，价值归零。</div>
+        <div class="w">当前：本地 stdio 单用户端点</div>
+      </div>
+    </div>
+    <div class="tagline" style="margin-top:10px">来源：[23] 全景文档:497–504 · [6] 事实卡:30 · [2] 全景文档:68</div>
+  </section>
+
+  <section class="panel p4">
+    <div class="phead"><span class="pt">落差与口径红线（必须画出）</span><span class="src">全景文档:506–512 · 事实卡:5</span></div>
+    <div class="finding">
+      <h3>文档与代码 / 文档之间不一致处，以代码为准</h3>
+      <ul>
+        <li><span class="g">落差</span><b>调研结论未收敛进总纲</b>：mem0 / OpenViking / zvec 的选型结论与 ADR-0001 已进 <code>README.md:31–42</code>，但 <code>codex-docs/BugVault-项目全景文档.md</code> §12「已否决方案」<span class="s">(:438–456)</span> 未提 mem0 / zvec。本图按「<b>已调研，未决策</b>」口径标注，不写成「已实现替代」。</li>
+        <li><span class="g">落差</span><b>交付形式旧文过时</b>：<code>分析/05.交付形式.md:9</code> 把核心逻辑写成「<code>main.py</code>（FastAPI 服务）」，而代码是 Python <b>stdio MCP Server</b>（<code>src/bugvault/main.py:81</code>）。以代码为准，旧文按「历史口径」引用。</li>
+        <li><span class="g p">口径</span><b>删除无法辩护的数字</b>：历史材料里那个「重复率降低」百分比没有分子、分母、样本与对照组；事实卡已决定删除。本图不再出现该数字，改用「未证明降低返修时间」的中性表述。</li>
+        <li><span class="g p">口径</span><b>产品化已冻结</b>：ADR-0001 结论为「非可行独立产品，产品化冻结」；本图把 BugVault 标为「部分（有实现，产品化冻结）」，不标「已实现」。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel p1 refs" id="refs">
+    <div class="phead"><span class="pt">证据来源（可定位到行）</span><span class="src">文件:行号</span></div>
+    <ol>
+      <li id="r1"><span><b>要解决的底层问题</b>：跨会话记忆缺失、重复犯错最贵、文档笔记对 AI 不生效。<span class="s">codex-docs/BugVault-项目全景文档.md:34–40</span></span></li>
+      <li id="r2"><span><b>边界四条</b>：不是 Agent 框架 / 不是 Web 服务 / 价值依赖客户端调用 / 单用户本地端点。<span class="s">codex-docs/BugVault-项目全景文档.md:63–68</span></span></li>
+      <li id="r3"><span><b>BugVault boundary 原文</b>：保存、检索、反思项目记忆；客户端决定是否遵循；不规划、不编辑业务代码、不跑 Agent Loop。<span class="s">CONTEXT.md:19–21</span></span></li>
+      <li id="r4"><span><b>Memory assets</b>：只有 Bug Record 与 Convention Record 两类一等记录；预防规则是派生产物。<span class="s">CONTEXT.md:3,9–11</span></span></li>
+      <li id="r5"><span><b>Retrieval 定义</b>：把 query 与过滤条件转成排序后的本地记忆。<span class="s">CONTEXT.md:22–24</span></span></li>
+      <li id="r6"><span><b>问题与系统边界</b>：跨会话遗忘；BugVault 负责 / 不负责清单。<span class="s">resume/active/bugvault-project-fact-card.md:13–30</span></span></li>
+      <li id="r7"><span><b>AI Bug 五类</b>：代码错误、业务规则、架构约定、测试约定、风格结构。<span class="s">README.md:47–53</span></span></li>
+      <li id="r8"><span><b>How to choose a tool today</b>：通用记忆用 mem0 / Zep / Letta / LangMem；上下文平台看 OpenViking；本地检索看 zvec。<span class="s">README.md:31–38</span></span></li>
+      <li id="r9"><span><b>产品假设不是已证结论</b>：是否减少未来错误是假设。<span class="s">README.md:56–58</span></span></li>
+      <li id="r10"><span><b>ADR-0001 Why</b>：通用记忆组件已覆盖生命周期；Skill / ADR / review 已覆盖决策捕获；Markdown / Git 足够被动记录；但「让 Agent 自行决定是否检索」不构成可靠产品边界。<span class="s">docs/adr/0001-stop-bugvault-product-validation.md:13–17</span></span></li>
+      <li id="r11"><span><b>ADR-0001 结论</b>：非可行独立产品，产品化冻结，保留为案例研究。<span class="s">docs/adr/0001-stop-bugvault-product-validation.md:32</span></span></li>
+      <li id="r12"><span><b>三类竞品与漏洞</b>：通用记忆 MCP 弱结构易漏失败尝试；IDE 本地文档依赖人工前置；Agent 记忆库过重、噪音大。<span class="s">codex-docs/refer/分析/01.行业竞品分析与产品定位报告.md:11–27</span></span></li>
+      <li id="r13"><span><b>为什么不做通用 Skill</b>：越通用越易沦为鸡肋；MCP 是「一次编写，处处运行」的传输层。<span class="s">codex-docs/refer/分析/02.为什么不做成skill.md:7,14–20,26–30</span></span></li>
+      <li id="r14"><span><b>mem0 阅读结论</b>：竞争力在配置驱动产品接口与默认管线，而非检索算法。<span class="s">docs/research/mem0-source-reading.md:11–30</span></span></li>
+      <li id="r15"><span><b>四方对照</b>：存储内核（zvec）、通用记忆（mem0）、上下文平台（OpenViking）、垂直应用（BugVault）。<span class="s">docs/research/zvec-openviking-reading-and-direction.md:73–84</span></span></li>
+      <li id="r16"><span><b>MCP 工具清单（代码）</b>：<code>retrieve_bug_experience</code> / <code>save_bug_experience</code> / <code>save_convention</code> / <code>retrieve_convention</code> / <code>reflect_and_prevent_error</code>。<span class="s">src/bugvault/mcp_tools/tools.py:236–310（register_tools:203）</span></span></li>
+      <li id="r17"><span><b>预防规则写回（代码）</b>：追加到 <code>## Bug Prevention Rules</code>，默认 <code>~/.bugvault/CLAUDE.md</code>。<span class="s">src/bugvault/services/reflection_svc.py:18–32,46–57</span></span></li>
+      <li id="r18"><span><b>本地 stdio 端点（代码）</b>：<code>Server</code> + <code>mcp.server.stdio.stdio_server()</code>。<span class="s">src/bugvault/main.py:77–81</span></span></li>
+      <li id="r19"><span><b>数据根目录（代码）</b>：<code>data_root = ~/.bugvault</code>。<span class="s">src/bugvault/config.py:19</span></span></li>
+      <li id="r20"><span><b>无强制调用代码</b>：<code>grep -rn "preflight\|postflight" src/</code> 无匹配；与全景文档:67「客户端跳过则无法干预」一致，故标代码证据。<span class="s">src/（全仓无匹配）+ codex-docs/BugVault-项目全景文档.md:67</span></span></li>
+      <li id="r21"><span><b>旧文过时证据</b>：交付形式写成 FastAPI 服务，与 stdio 代码不符。<span class="s">codex-docs/refer/分析/05.交付形式.md:9</span></span></li>
+      <li id="r22"><span><b>总纲未收敛</b>：§12 已否决路径未列 mem0 / OpenViking / zvec。<span class="s">codex-docs/BugVault-项目全景文档.md:438–456</span></span></li>
+      <li id="r23"><span><b>系统边界如实状态</b>：单用户本地 stdio，无多租户 / 鉴权 / 分布式可靠性；图叠加层为写侧投影。<span class="s">codex-docs/BugVault-项目全景文档.md:497–504</span></span></li>
+      <li id="r24"><span><b>文档口径漂移</b>：README 测试数、pyproject 版本、.env.example 注释、reranker 模型描述均需统一。<span class="s">codex-docs/BugVault-项目全景文档.md:506–512</span></span></li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>BugVault · 链路 07 · 定位与边界结构图</span>
+    <span>证据基线：当前工作区代码 + 文档（只读，未运行测试 / 服务 / 模型）</span>
+    <span>口径：代码证据与文档口径分栏；无代码者标「文档口径」</span>
+    <span>生成路径：<code>docs/show-me-07-problem-and-boundary.html</code></span>
+  </footer>
+</div>
+</body>
+</html>

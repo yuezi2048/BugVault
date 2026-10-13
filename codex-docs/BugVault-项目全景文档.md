@@ -333,7 +333,7 @@ Note(root_cause): …
 Agent 调用 save_bug_experience / save_convention
   │
   ├─ 同步：Pydantic 校验（必填 + 长度）
-  │      ├─ 缺必填 → 返回 draft + 缺哪些字段（Agent 可补问，最多 3 轮）
+  │      ├─ 缺必填 → 返回 draft + 缺失字段清单（补问话术与「最多 3 轮」尚未接线，见 §14.3.1）
   │      ├─ 结构非法 → 返回 validation_error
   │      └─ 完整 → 写 Markdown 归档（可读副本先行）
   │
@@ -413,6 +413,8 @@ rag_confidence_score       = faithfulness × 5 + context_relevance   （0–10�
 | 结构化错误码 | `ErrorCode` 枚举：`ok` / `rate_limited` / `timeout` / `auth_fail` / `content_safety` / `parse_error` / `validation_error` / `internal` / `not_found` / `quota_exceeded`；`_classify_error` 按异常启发式映射 |
 | 统一 AI 调用日志 | `handle_call_tool` 每次 entry/exit 两条 JSONL（可区分「卡住未返回」与「正常返回」），记录耗时/状态/错误码 |
 | Token 成本估算 | 内置模型价格表 + 默认兜底价，评估结果带 `estimated_cost_usd`；成本计算失败不影响主流程 |
+
+> **口径校正（2026-10-09 show-me 复核）**：上表代码落点存在两条需要打折的表述。其一，`ErrorCode` 枚举虽列出 `validation_error` / `not_found` / `quota_exceeded`，但 `_classify_error` 只映射 rate_limit / timeout / auth / content / parse → internal，这三个值在 MCP 链路不可达。其二，exit 日志的正常 `return` 分支硬编码 `status="ok", error_code="ok"`，非法参数、draft、空结果都被记成成功，因此「可区分卡住与正常返回」只对抛异常路径成立。详见 §14.3.6、§14.3.7。
 
 配套防线：stdout 纯净守卫、FTS/重排/评估多级降级、路径 `expanduser().resolve()` + `mkdir` 前置、LLM 响应强制 `response_format=json_object` + fence 剥离。
 
@@ -510,6 +512,25 @@ rag_confidence_score       = faithfulness × 5 + context_relevance   （0–10�
 - 文档口径漂移：README 测试数（137+）、`pyproject` 版本（1.0.0 vs config 2.0.0）、`.env.example` 注释默认值、README 中 reranker 模型（旧默认 80MB vs 当前 1.1GB 多语言模型）均需统一。
 - 历史分析文档个别措辞过时（例如把交付描述成 Web/FastAPI），引用时以代码为准。
 - 部分特性文档分散在 `codex-docs/refer/` 与 `reasonix-doc/`，版本驱动演进，缺少「当前态」单一事实源——本文档即为该问题的第一步收敛。
+
+### 14.3 show-me 图纸（链路 07–12）复核发现的文档—代码落差
+
+2026-10-09 绘制 `docs/show-me-07..12-*.html` 时，以代码为准逐条复核出下列「文档说已做、代码没做」或口径不符项。图纸已在对应位置红标；此处回写为当前事实源。行号基于当前工作区，未运行测试 / 服务 / 模型。
+
+1. **draft「补问话术 + 最多 3 轮」未接线**（曾写在 §7.1）。draft 实际只返回缺失字段清单（`mcp_tools/tools.py:484–493`）；`suggest_probe_questions` / `suggest_convention_probe_questions`（`services/ingestion_svc.py:21`、`:67`）与 `MAX_PROBE_ROUNDS` / `probe_round_exhausted` / `increment_probe`（`models/bug_record.py:77`、`:102`、`:105`）除定义处外无调用，`_probe_rounds` 随实例重置且不落库，Convention 无轮次概念。
+2. **Archive 失败仍继续建立记忆**（与 `CONTEXT.md` «Record establishment» 不一致）。`_prepare` 把归档异常记为 non-fatal（`services/persistence_svc.py:152–156`）后照常返回完整记录，后台继续写向量；域模型要求「校验通过且 Archive 成功后才成为正式记忆」。
+3. **Markdown 归档不幂等**。归档文件名带时间戳（`services/archive_svc.py:138`、`:225`），重复保存同一记录会在归档目录累积重复文件；与 §5.5 及事实卡「去重 / 防知识库膨胀」表述不符（upsert 只作用于 LanceDB 主键）。
+4. **关闭异步开关时无同步兜底**。`enable_async_embedding=false` 时既不调度后台任务也不同步写 LanceDB，结果是「只归档、不索引」（`mcp_tools/tools.py:442–447`；默认 `True`，`config.py:47`）。
+5. **MCP `inputSchema` 不参与服务端校验**。仓库仅 5 处 `inputSchema=` 赋值（`mcp_tools/tools.py:252`、`:264`、`:275`、`:284`、`:299`），无任何 JSON Schema 校验调用；实际拦截全在 Pydantic 层，报错文案是 Python 校验信息而非 schema 违规说明。
+6. **exit 日志把失败、草稿、空结果记成成功**。`handle_call_tool` 正常 `return` 分支硬编码 `status="ok", error_code="ok"`（`mcp_tools/tools.py:378–382`），非法参数、draft、空检索都走该分支。
+7. **`ErrorCode` 枚举值不可达**。`validation_error` / `not_found` / `quota_exceeded`（`models/error_code.py:26`、`:30`、`:31`）在 MCP 链路不会被 `_classify_error` 产出（`observability.py:217–236`）；claim_level 配额耗尽在评测层降级为 `simple (fallback_from_error)`（`services/rag_evaluator_svc.py:593–616`），不走错误码。
+8. **traceId 不回传客户端**。`trace_id` 只进服务端日志与 `ai_call.jsonl`（`mcp_tools/tools.py:310`、`:322`；`observability.py:103`），MCP 返回内容不含 traceId，客户端无法凭返回关联日志。
+9. **`retrieve_convention` 空结果复用 bug 文案**。返回 `"No matching bug experiences found in the knowledge base."`（`mcp_tools/tools.py:614`，bug 版见 `:548`）。
+10. **反思工具未走模型校验、`PreventionRule` 未实例化**。`reflect_and_prevent_error` 手工判空（`mcp_tools/tools.py:792–800`）；`PreventionRule` 模型仅在 `models/reflection_rule.py:8` 定义，全仓库无实例化引用。
+11. **`_classify_error` 为子串匹配**，`auth` / `content` 等关键词命中即归类（`observability.py:228–231`），普通报错含这些词会被误分类。
+12. **线程池并发上限硬编码**。`thread_pool_workers: int = 2`（`config.py:40`），executor 固定 2 线程，高并发排队、不可水平扩展。
+13. **`experiments/report.md` 与实测/自身上下文矛盾**。核心结论第 4 条「Full Pipeline 能有效返回空结果」与 No-Answer 表 0% 拒答率冲突（§13.4 已记 0%）；Full 管线在 `benchmark_retrieval.py:136` 有定义但报告结果表缺失；核心结论编号 1 / 3 / 4 缺 2。
+14. **调研结论未收敛**。`docs/research/mem0-source-reading.md`、`zvec-openviking-reading-and-direction.md` 的结论已进 `README.md`，但 §12「已否决方案」未提 mem0 / zvec；按「已调研，未决策」处理。
 
 ---
 

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>混合检索与排序 · BugVault 一次 retrieve 的六步主链路</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1220px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:24px}
+  h1{font-size:clamp(20px,3vw,27px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-top:6px;text-transform:uppercase}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:84ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;box-shadow:var(--shadow);color:var(--ink2)}
+  nav.top a.on{border-color:var(--b1);color:var(--b1);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;border-left:3px solid var(--pc,var(--b1))}
+  .p1{--pc:var(--b1)}.p2{--pc:var(--b2)}.p3{--pc:var(--b5)}.p4{--pc:var(--b4)}.p5{--pc:var(--warn)}
+  .phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .phead .pt{font-size:15.5px;font-weight:700}
+  .phead .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:var(--b1);border:1px solid #adc6ff;font-weight:600}
+  .phead .tag.warn{background:var(--warnbg);color:var(--warn);border-color:#ffbb96}
+  .phead .tag.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .phead .src{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .pdesc{font-size:13px;color:var(--ink2);margin:6px 0 16px}
+  .pdesc code,td code,li code,.kv code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px;margin-top:4px;align-items:baseline}
+  .kv .k{font-family:var(--mono);font-size:11.5px;color:var(--b1);white-space:nowrap}
+  .kv .v{color:var(--ink2)}.kv .v b{color:var(--ink);font-weight:600}
+
+  /* ---------------- 时序图 ---------------- */
+  .seqwrap{overflow-x:auto;padding-bottom:4px}
+  .seq{position:relative;min-width:1010px}
+  .ph{position:absolute;top:0;transform:translateX(-50%);background:#fff;border:1px solid var(--line);
+      border-radius:9px;padding:7px 6px;text-align:center;line-height:1.25;z-index:4}
+  .ph b{display:block;font-size:11.5px;font-weight:700}
+  .ph span{display:block;font-size:9.5px;color:var(--ink3);font-family:var(--mono);margin-top:1px}
+  .ph.actor{border-color:#adc6ff;color:var(--b1);box-shadow:0 0 0 3px #eef4ff}
+  .ll{position:absolute;border-left:1.5px dashed #d6dae0;z-index:1}
+  .step{position:absolute;left:0;width:30px;text-align:right;z-index:5}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .step.grp .n{background:var(--b1);color:#fff}
+  .gbracket{position:absolute;left:33px;border-left:2px solid #cfd6df;border-radius:2px}
+  .gband{position:absolute;right:0;background:#f0f5ff;border:1px solid #d6e4ff;color:var(--b1);border-radius:7px;
+    font-size:11.5px;font-weight:700;padding:5px 11px;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .noteband{position:absolute;right:8px;background:#fafbfc;border:1px dashed #d6dae0;border-radius:8px;font-size:11.5px;
+    color:var(--ink2);padding:6px 11px;line-height:1.45;overflow:hidden;z-index:2}
+  .noteband b{color:var(--ink);font-weight:600}
+  .noteband code{font-family:var(--mono);font-size:11px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .msg{position:absolute;z-index:3}
+  .msg .lbl{position:absolute;left:8px;right:8px;bottom:8px;font-size:11px;color:var(--ink2);line-height:1.28;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .msg .lbl b{color:var(--ink);font-weight:600}
+  .msg .line{position:absolute;bottom:4px;left:0;right:0;height:0;border-top:2.2px solid #6b7280}
+  .msg .line::after{content:"";position:absolute;top:-5.5px;border:5.5px solid transparent}
+  .msg.fwd .line::after{right:-1px;border-left-color:#6b7280}
+  .msg.back .line::after{left:-1px;border-right-color:#6b7280}
+  .msg.ret .line{border-top-style:dashed;border-top-width:1.8px;border-top-color:#9aa4b2}
+  .msg.ret.fwd .line::after{border-left-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .msg.ret.back .line::after{border-right-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .legend{margin-top:14px;font-size:11.5px;color:var(--ink3);display:flex;gap:18px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:12px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg-solid{display:inline-block;width:26px;border-top:2.2px solid #6b7280}
+  .lg-dash{display:inline-block;width:26px;border-top:2px dashed #9aa4b2}
+  .lg-note{display:inline-block;width:26px;height:11px;border:1px dashed #cbd5e1;background:#fafbfc;border-radius:3px}
+  .lg-gut{display:inline-block;width:20px;height:12px;border-radius:4px;background:var(--b1)}
+
+  /* ---------------- 图下脚注 ---------------- */
+  .facts{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+  .facts h3{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:600;margin-bottom:11px}
+  .facts ol{list-style:none;display:grid;gap:9px}
+  .facts li{display:flex;gap:11px;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .facts .fn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 6px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+  .facts li b{color:var(--ink);font-weight:600}
+
+  /* ---------------- 对照表 / 发现 ---------------- */
+  table.cmp{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+  table.cmp th,table.cmp td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  table.cmp th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  table.cmp td:first-child{color:var(--ink);font-weight:600;width:17%}
+  table.cmp td:nth-child(2){width:26%}
+  table.cmp .inc{display:inline-block;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px;margin-left:4px;vertical-align:middle}
+  table.cmp .inc.gray{background:var(--warnbg);color:var(--warn);border:1px solid #ffbb96}
+  table.cmp .inc.fb{background:#e6f4ff;color:#0958d9;border:1px solid #91caff}
+  table.cmp .inc.off{background:#f5f5f5;color:var(--ink3);border:1px solid #e0e0e0}
+  .finding{border-left:3px solid var(--warn);background:#fff9f5;border-radius:0 10px 10px 0;padding:12px 15px;font-size:13px;color:var(--ink2);margin-top:16px}
+  .finding b{color:var(--warn)}
+  .finding ul{margin:8px 0 0 0;padding-left:18px;display:grid;gap:8px}
+  .finding code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .finding .gap{display:inline-block;font-size:10.5px;font-weight:700;color:#fff;background:var(--warn);border-radius:5px;padding:1px 6px;margin-right:6px}
+  .finding .gap.pending{background:#fa8c16}
+  footer{margin-top:32px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px 18px}
+  footer code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  @media(max-width:960px){body{padding:22px 14px 44px}.panel{padding:16px 15px}.phead .src{margin-left:0;width:100%}}
+  @media(max-width:720px){
+    table.cmp thead{display:none}
+    table.cmp tr{display:block;border-bottom:1px solid var(--line);padding:9px 0}
+    table.cmp td{display:block;border:none;padding:2px 0;width:auto!important}
+    table.cmp td::before{content:attr(data-label) "：";color:var(--ink3);font-size:10.5px;font-weight:600;letter-spacing:.04em}
+    table.cmp td:first-child{font-size:14px;margin-bottom:3px}
+  }
+  @media print{body{background:#fff;padding:0}.panel{box-shadow:none;break-inside:avoid}@page{margin:12mm}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>混合检索与排序：向量 + BM25 + RRF + Cross-Encoder
+      <small>BugVault · 链路 10 · 检索主链路时序图 + 增强与降级对照表</small>
+    </h1>
+    <p class="lede">一次 <code>retrieve_bug_experience</code> 的完整链路：query 进入后先做元数据过滤，再在 <code>bugvault_chunks</code> 上做<b>向量 ANN + FTS(BM25) 双路召回</b>，用 <b>RRF 只按排名融合</b>，按 <code>parent_id</code> 回捞完整记录，最后可选 Cross-Encoder 精排并返回 Top-K。图上所有类名、字段、行号均来自当前代码。本页不运行任何服务或模型，需要运行确认的数字标「待核验」。</p>
+    <nav class="top">
+      <a href="show-me-index.html">&larr; 图纸索引</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a class="on" href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a href="show-me-11-eval-credibility.html">11 评测可信度</a>
+    </nav>
+  </header>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">开关与默认值</span><span class="tag">config.py</span><span class="src">config.py:24–61</span></div>
+    <p class="pdesc">下列均为代码默认值；标<b>「待核验」</b>者需要跑一次检索才能确认线上实际取值，本会话不加载模型、不启动服务。</p>
+    <div class="kv">
+      <span class="k">settings.top_k</span><span class="v"><b>5</b> — 最终返回条数（config.py:28）</span>
+      <span class="k">settings.min_semantic_score</span><span class="v"><b>0.50</b> — 纯向量语义下限（config.py:29）</span>
+      <span class="k">settings.enable_fts</span><span class="v"><b>True</b> — 启用 FTS 双路（config.py:57）</span>
+      <span class="k">settings.enable_reranker</span><span class="v"><b>True</b> — 启用 Cross-Encoder 精排（config.py:60）</span>
+      <span class="k">rerank_limit</span><span class="v">= <code>top_k * 4</code> = <b>20</b> — 每路候选规模（retrieval_svc.py:78）</span>
+      <span class="k">rrf_fusion(k=60)</span><span class="v">RRF 平滑常数，取函数签名默认值（retrieval_svc.py:329）</span>
+      <span class="k">settings.enable_recency_decay</span><span class="v"><b>False</b> — 时间衰减默认关闭（config.py:30）</span>
+      <span class="k">settings.reranker_model</span><span class="v"><code>jinaai/jina-reranker-v2-base-multilingual</code>（config.py:61）</span>
+      <span class="k">settings.enable_rag_eval</span><span class="v"><b>False</b> — 评测是检索后的辅助步骤，不参与排序（config.py:50）</span>
+    </div>
+  </section>
+
+  <section class="panel p2">
+    <div class="phead"><span class="pt">图 A — 检索主链路（六步）</span><span class="tag">Sequence</span><span class="src">retrieval_svc.py:66–117</span></div>
+    <p class="pdesc">左侧数字 = 六个主步骤，解释见下方脚注；灰带是模块内部动作（不跨进程）。移动端可横向滑动查看。排序发生两次：<b>第 4 步 RRF</b> 与 <b>第 6 步 Cross-Encoder</b> 是两段独立排序。</p>
+    <div class="seqwrap"><div class="seq" id="seqMain"></div></div>
+    <div class="legend">
+      <span><i class="lg-solid"></i>调用</span>
+      <span><i class="lg-dash"></i>返回</span>
+      <span><i class="lg-note"></i>模块内部步骤（文字说明）</span>
+      <span><i class="lg-gut"></i>左侧六步步号</span>
+    </div>
+    <div class="facts">
+      <h3>步骤说明</h3>
+      <ol>
+        <li><span class="fn">1</span><span><b>query 进入</b>：客户端调用 <code>retrieve_bug_experience</code>，<code>query</code> 必填，<code>target_tech_stack</code> / <code>target_project_name</code> 可选（<code>mcp_tools/tools.py:44,86,527–541</code>）。handler 经 <code>_retrieve_records</code>（<code>tools.py:621–630</code>）把同步检索提交到共享线程池 <code>run_in_executor</code>，避免阻塞 stdio 事件循环。空 query 在 <code>retrieve()</code> 直接返回错误文案（<code>retrieval_svc.py:68–71</code>）。</span></li>
+        <li><span class="fn">2</span><span><b>生成 embedding + 元数据过滤</b>：<code>rerank_limit = settings.top_k * 4</code>（<code>retrieval_svc.py:78</code>）；<code>build_filter_clause</code>（<code>:260</code>）对 <code>tech_stack</code> / <code>project_name</code> 生成 <code>LOWER(...) LIKE '%值%'</code>，<code>_record_type_filter</code>（<code>:280</code>）再拼 <code>record_type='bug'</code>。过滤值先过 <code>sanitise_filter_value</code>（<code>:253</code>）。<code>_TECH_EXCLUSIONS</code>（<code>:248</code>）为 <code>java</code> 追加 <code>NOT LIKE '%javascript%'</code>，消除 Java 与 JavaScript 歧义。随后 <code>embedding_svc.generate_embedding(query)</code>（<code>:86</code>，bge-small-zh-v1.5，512 维）。</span></li>
+        <li><span class="fn">3</span><span><b>双路召回（各 top_k × 4）</b>：在 <code>bugvault_chunks</code> 上做向量 ANN（<code>search_chunks</code>，<code>lancedb_client.py:284</code>）与 FTS BM25（<code>search_chunks_fts</code>，<code>:253</code>）；两路共用同一 <code>filter_clause</code>，即过滤条件<b>同时下推到两路</b>。两路各取 <code>limit = 20</code>（<code>retrieval_svc.py:141–155</code>），FTS 结果再过滤 <code>_score &gt; 0</code>（<code>:179</code>）。</span></li>
+        <li><span class="fn">4</span><span><b>排序层 ① RRF 融合</b>：<code>rrf_fusion(vec_results, fts_results, k=60)</code>（<code>retrieval_svc.py:326–383</code>）。向量路按 <code>_distance</code> 升序、FTS 路按 <code>_score</code> 降序各自排名，累加 <code>1/(k+rank)</code>（<code>:360,:366</code>）。<b>只用排名，不归一化</b>余弦距离与 BM25 分数量纲，所以无需把两路分数调到同一尺度。k 默认 60（<code>:329</code>）。</span></li>
+        <li><span class="fn">5</span><span><b>取每父记录最佳 chunk + 回捞完整记录</b>：<code>_map_chunks_to_parent_records</code>（<code>retrieval_svc.py:204–233</code>）按 <code>parent_id</code> 分组，用 <code>_chunk_score</code>（<code>:285</code>）取每父最佳 chunk，再用其 <code>parent_id</code>（等于 <code>record_id</code>）集合调 <code>fetch_records_by_ids</code>（<code>lancedb_client.py:324</code>），SQL 为 <code>record_id IN (...)</code>（<code>:342</code>），从 <code>bug_records</code> 回查完整记录。<b>为什么分块</b>：整条长记录压成一个向量会稀释错误栈特征；子块聚焦命中、父文档回捞保证完整（<code>bug_record.py:143–190</code>）。</span></li>
+        <li><span class="fn">6</span><span><b>排序层 ② 可选 Cross-Encoder 精排，返回 Top-K</b>：先 <code>rerank(records)</code>（<code>retrieval_svc.py:391</code>）把 RRF 序（或纯向量语义分）叠加时间衰减，<code>enable_recency_decay</code> 默认 False（<code>:430</code>）；若 <code>enable_reranker=True</code> 再调 <code>CrossEncoderReranker.rerank</code>（<code>reranker_svc.py:55</code>）加 <code>_ce_score</code> 重排。最后 <code>_to_records(ranked[:settings.top_k], record_type)</code>（<code>:112</code>）返回 <code>top_k</code> 条。<b>注意：第 4 步 RRF 与第 6 步 CE 是两段独立排序，不是一次打分。</b></span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">图 B — 各路增强解决什么问题，失败如何降级</span><span class="tag ok">对照表</span><span class="src">retrieval_svc.py · lancedb_client.py · reranker_svc.py</span></div>
+    <p class="pdesc">「失败或降级」列标出的两处降级（FTS、Cross-Encoder）与两条兜底（chunks 无结果、filter 列不存在）。</p>
+    <table class="cmp">
+      <thead><tr><th>增强</th><th>解决什么问题</th><th>代码位置</th><th>开关默认</th><th>失败或降级行为</th></tr></thead>
+      <tbody>
+        <tr>
+          <td data-label="增强">元数据预过滤</td>
+          <td data-label="解决什么问题">排除跨语言假阳性：Python 的 ModuleNotFoundError 与 Java 的 ClassNotFoundException 在向量空间过近（设计依据 <code>refer/设计/metadata-filtering.md</code>）</td>
+          <td data-label="代码位置"><code>build_filter_clause</code> retrieval_svc.py:260</td>
+          <td data-label="开关默认">传参即生效</td>
+          <td data-label="失败或降级"><span class="inc fb">兜底</span> filter 列不存在（<code>No field named</code>）时去掉过滤条件重试（lancedb_client.py:145–151、271–277、315–321）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">向量 ANN（子块级）</td>
+          <td data-label="解决什么问题">同义不同措辞的语义召回</td>
+          <td data-label="代码位置"><code>search_chunks</code> lancedb_client.py:284</td>
+          <td data-label="开关默认">常开</td>
+          <td data-label="失败或降级">无内部兜底：异常上抛到 <code>call_tool</code> 顶层 try（tools.py:326,392），以错误文本返回</td>
+        </tr>
+        <tr>
+          <td data-label="增强">FTS BM25（子块级）</td>
+          <td data-label="解决什么问题">错误码、异常类名、精确关键词召回</td>
+          <td data-label="代码位置"><code>search_chunks_fts</code> lancedb_client.py:253</td>
+          <td data-label="开关默认"><code>enable_fts=True</code></td>
+          <td data-label="失败或降级"><span class="inc gray">降级</span> 异常 → 返回 <code>[]</code>，退化为 vector-only（retrieval_svc.py:180–182）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">RRF 融合</td>
+          <td data-label="解决什么问题">融合两路不同量纲的排名，免去分数归一化调参</td>
+          <td data-label="代码位置"><code>rrf_fusion(k=60)</code> retrieval_svc.py:326</td>
+          <td data-label="开关默认">有 FTS 结果即启用</td>
+          <td data-label="失败或降级">无 FTS 结果时直接用向量路结果（retrieval_svc.py:155）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">父子分块 + 父文档回捞</td>
+          <td data-label="解决什么问题">长记录整条一个向量会稀释错误栈特征；子块聚焦命中、父文档回捞保证完整</td>
+          <td data-label="代码位置"><code>to_chunks</code> bug_record.py:145；<code>_map_chunks_to_parent_records</code> retrieval_svc.py:204</td>
+          <td data-label="开关默认">常开</td>
+          <td data-label="失败或降级"><span class="inc fb">兜底</span> chunks 无结果 → 回退父表 FTS <code>_search_parent_fts</code>（retrieval_svc.py:157–158,184）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">时间衰减重排 rerank</td>
+          <td data-label="解决什么问题">旧经验可能已过时</td>
+          <td data-label="代码位置"><code>rerank</code> retrieval_svc.py:391,429</td>
+          <td data-label="开关默认"><code>enable_recency_decay=False</code></td>
+          <td data-label="失败或降级">关闭时 <code>base_score</code> 直接作为得分（:436）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">Cross-Encoder 精排</td>
+          <td data-label="解决什么问题">对 (query, doc) 逐对打分，提升 Top-K 精度（ADR 选用 CE，放弃 ColBERT）</td>
+          <td data-label="代码位置"><code>CrossEncoderReranker</code> reranker_svc.py:39</td>
+          <td data-label="开关默认"><code>enable_reranker=True</code></td>
+          <td data-label="失败或降级"><span class="inc gray">降级</span> 加载或推理失败 → 保留 RRF 顺序，不阻断返回（retrieval_svc.py:108–109；reranker_svc.py:27–32、69–71）</td>
+        </tr>
+        <tr>
+          <td data-label="增强">RAG Eval</td>
+          <td data-label="解决什么问题">对检索结果做质量评分（不参与排序）</td>
+          <td data-label="代码位置"><code>rag_evaluator_svc.py</code>；tools.py:554–571</td>
+          <td data-label="开关默认"><code>enable_rag_eval=False</code></td>
+          <td data-label="失败或降级">异常只跳过评分，结果照常返回（tools.py:568–571）</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel p5">
+    <div class="phead"><span class="pt">落差：文档与代码不一致（以代码为准）</span><span class="tag warn">需回写</span><span class="src">codex-docs/refer/设计 · src/bugvault</span></div>
+    <p class="pdesc">以下为本次只读核对发现的落差。按仓库约定，共享文件（全景文档 / 事实卡 / README）由收尾会话统一回写，本会话只在图上标红并记入工单。</p>
+    <div class="finding">
+      <b>图上的红色标注即为这些落差；正文描述以代码行号为准。</b>
+      <ul>
+        <li><span class="gap">落差</span> <code>metadata-filtering.md</code> 把过滤实现写在 <code>mcp_tools/tools.py</code>（<code>_sanitise_filter_value</code> / <code>_build_filter_clause</code>），实际实现位于 <code>services/retrieval_svc.py:253</code>（<code>sanitise_filter_value</code>）与 <code>:260</code>（<code>build_filter_clause</code>）；且文档 SQL 示例省略了 <code>record_type</code> 与 <code>NOT LIKE '%javascript%'</code> 排除。以代码为准。</li>
+        <li><span class="gap">落差</span> <code>adr-cross-encoder-vs-colbert.md</code> 的「后续优化方向」把 <code>jina-reranker-v2-base-multilingual</code> 当作未来替换项，但 <code>config.py:61</code> 现已默认该模型 —— 文档滞后于代码。</li>
+        <li><span class="gap">落差</span> <code>rerank()</code> 文档字符串（<code>retrieval_svc.py:405</code>）称 RRF 路径的语义阈值「已在向量阶段应用」，代码里 <code>min_semantic_score</code> 只在 <code>rerank()</code> 内对带 <code>_distance</code> 的行生效（<code>:415–421</code>）；FTS-only 行不经过该阈值。图上按代码标注。</li>
+        <li><span class="gap pending">待核验</span> <code>metadata-filtering.md</code> 的「过滤前 75 条 / 过滤后约 30 条」为历史数据集口径，本会话不运行检索，无法确认当前数据量，标「待核验」。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>BugVault · 链路 10 · 混合检索与排序</span>
+    <span>源码证据：<code>retrieval_svc.py</code> · <code>lancedb_client.py</code> · <code>reranker_svc.py</code> · <code>embedding_svc.py</code> · <code>config.py</code></span>
+    <span>只读代码与文档，未修改业务代码，未运行测试与服务</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var ACTORS=[
+    {k:'client',name:'MCP Client',sub:'调用方'},
+    {k:'tools',name:'_handle_retrieve',sub:'mcp_tools/tools.py'},
+    {k:'retr',name:'RetrievalModule',sub:'retrieval_svc.py'},
+    {k:'emb',name:'EmbeddingService',sub:'embedding_svc.py'},
+    {k:'db',name:'LanceDBClient',sub:'bugvault_chunks / bug_records'},
+    {k:'ce',name:'CrossEncoderReranker',sub:'reranker_svc.py'}
+  ];
+  var GROUPS=[
+    {n:1,title:'query 进入（MCP 工具入口）',rows:[
+      {t:'msg',from:'client',to:'tools',kind:'req',label:'retrieve_bug_experience(query, target_tech_stack?, target_project_name?)'},
+      {t:'note',label:'构造 <b>RetrievalRequest</b>（tools.py:518–542）→ <b>run_in_executor</b> 提交线程池（:621–630）'}
+    ]},
+    {n:2,title:'生成 embedding + 元数据过滤',rows:[
+      {t:'msg',from:'tools',to:'retr',kind:'req',label:'RetrievalModule.retrieve(request)'},
+      {t:'msg',from:'retr',to:'emb',kind:'req',label:'generate_embedding(query)'},
+      {t:'msg',from:'emb',to:'retr',kind:'ret',label:'query_embedding（bge-small-zh-v1.5，512 维）'},
+      {t:'note',label:'filter_clause：<code>LOWER(tech_stack)</code> / <code>LOWER(project_name) LIKE</code>，<code>record_type=\'bug\'</code>，同一 clause 下推两路（retrieval_svc.py:79–85）'}
+    ]},
+    {n:3,title:'bugvault_chunks 双路召回，各 top_k × 4',rows:[
+      {t:'msg',from:'retr',to:'db',kind:'req',label:'search_chunks(query_embedding, filter_clause, limit=20) 向量 ANN'},
+      {t:'msg',from:'retr',to:'db',kind:'req',label:'search_chunks_fts(query, filter_clause, limit=20) BM25'},
+      {t:'msg',from:'db',to:'retr',kind:'ret',label:'两路候选，各不超过 20 条'},
+      {t:'note',label:'limit = rerank_limit = top_k × 4 = 20（retrieval_svc.py:78,141–155）'}
+    ]},
+    {n:4,title:'排序层 ①：RRF 融合（只用排名）',rows:[
+      {t:'note',label:'<b>rrf_fusion(k=60)</b>：score += 1/(k+rank)；<b>只用排名，不归一化余弦距离与 BM25 量纲</b>（retrieval_svc.py:326–383）'}
+    ]},
+    {n:5,title:'取每父记录最佳 chunk + 回捞完整记录',rows:[
+      {t:'note',label:'按 <code>parent_id</code> 分组，用 <code>_chunk_score</code> 取每父最佳 chunk（retrieval_svc.py:204–233）'},
+      {t:'msg',from:'retr',to:'db',kind:'req',label:'fetch_records_by_ids([parent_id ...]) → record_id IN (...)'},
+      {t:'msg',from:'db',to:'retr',kind:'ret',label:'完整 bug_records 行（合并回最佳 chunk 的 _distance / _rrf_score）'}
+    ]},
+    {n:6,title:'排序层 ②：可选 Cross-Encoder 精排，返回 Top-K',rows:[
+      {t:'note',label:'rerank(records)：RRF 序 + 时间衰减（retrieval_svc.py:391,429）'},
+      {t:'msg',from:'retr',to:'ce',kind:'req',label:'reranker.rerank(query, ranked)（enable_reranker=True）'},
+      {t:'msg',from:'ce',to:'retr',kind:'ret',label:'_ce_score 重排；加载或推理失败 → 保留 RRF 顺序'},
+      {t:'msg',from:'retr',to:'tools',kind:'ret',label:'RetrievalResult(records=ranked[:top_k], vector_count, fts_count, used_cross_encoder)'},
+      {t:'msg',from:'tools',to:'client',kind:'ret',label:'格式化文本（Strategy / Sources / Result 1..k）'}
+    ]}
+  ];
+
+  var GUTTER=44, TOP=64, HB=30, ROW=54, NOTE=50, GAPG=18;
+  var N=ACTORS.length;
+  function frac(i){return (i+0.5)/N;}
+  function XP(f){return 'calc('+GUTTER+'px + (100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+  function WP(f){return 'calc((100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+
+  var el=document.getElementById('seqMain'), out='', y=TOP, layout=[];
+  GROUPS.forEach(function(g){
+    var h=HB;
+    g.rows.forEach(function(r){h+=(r.t==='note'?NOTE:ROW);});
+    layout.push({g:g,top:y,h:h});
+    y+=h+GAPG;
+  });
+  var H=y+12;
+
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ph'+(i===0?' actor':'')+'" style="left:'+XP(frac(i))+';width:'+WP(0.92/N)+'"><b>'+a.name+'</b><span>'+a.sub+'</span></div>';
+  });
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ll" style="left:'+XP(frac(i))+';top:52px;height:'+(H-68)+'px"></div>';
+  });
+  layout.forEach(function(L){
+    var g=L.g, gy=L.top;
+    out+='<div class="step grp" style="top:'+(gy+4)+'px"><span class="n">'+g.n+'</span></div>';
+    out+='<div class="gbracket" style="top:'+(gy+4)+'px;height:'+(L.h-8)+'px"></div>';
+    out+='<div class="gband" style="top:'+gy+'px;left:'+GUTTER+'px">'+g.title+'</div>';
+    var ry=gy+HB;
+    g.rows.forEach(function(r){
+      if(r.t==='note'){
+        out+='<div class="noteband" style="top:'+(ry+2)+'px;height:'+(NOTE-6)+'px;left:'+(GUTTER+10)+'px">'+r.label+'</div>';
+        ry+=NOTE;
+      } else {
+        var ai=-1,bi=-1;
+        ACTORS.forEach(function(a,idx){if(a.k===r.from)ai=idx;if(a.k===r.to)bi=idx;});
+        var fa=frac(ai),fb=frac(bi),lo=Math.min(fa,fb),wd=Math.abs(fb-fa);
+        var dir=(fb>=fa)?'fwd':'back';
+        var ret=(r.kind==='ret')?' ret':'';
+        out+='<div class="msg'+ret+' '+dir+'" style="left:'+XP(lo)+';width:'+WP(wd)+';top:'+(ry+4)+'px;height:'+(ROW-6)+'px"><div class="line"></div><div class="lbl">'+r.label+'</div></div>';
+        ry+=ROW;
+      }
+    });
+  });
+  el.style.height=H+'px';
+  el.innerHTML=out;
+})();
+</script>
+</body>
+</html>

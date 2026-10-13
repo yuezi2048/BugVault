@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>BugVault show-me 图纸索引 — 链路 07–12</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1220px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:22px}
+  h1{font-size:clamp(20px,3vw,28px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-top:6px;text-transform:uppercase}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:96ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;color:var(--ink2)}
+  nav.top a:hover{border-color:var(--b1);color:var(--b1);text-decoration:none}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;margin-bottom:16px}
+  .pt{font-size:14px;font-weight:700;display:block;margin-bottom:4px}
+  .pdesc{font-size:13px;color:var(--ink2);margin:4px 0 0}
+  .pdesc code,footer code,.card code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12.5px;color:var(--ink2)}
+  .legend .it{display:inline-flex;align-items:center;gap:7px}
+
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}}
+  .card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
+  .card .top{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px dashed var(--line)}
+  .num{flex:none;width:40px;height:40px;border-radius:11px;background:var(--b1);color:#fff;font-family:var(--mono);font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center}
+  .card .top .tt{font-size:15px;font-weight:700;line-height:1.3}
+  .card .top .tt small{display:block;font-size:10.5px;font-weight:600;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
+  .lv{display:inline-block;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 7px;border:1px solid transparent;white-space:nowrap;margin-left:auto;flex:none}
+  .lv.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .lv.code{background:#e6f4ff;color:#0958d9;border-color:#91caff}
+  .lv.part{background:#fff7e6;color:#d46b08;border-color:#ffd591}
+  .body{padding:14px 16px;display:flex;flex-direction:column;gap:12px;flex:1}
+  .sec .k{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;display:block;margin-bottom:4px}
+  .sec .v{font-size:13px;color:var(--ink2);line-height:1.62}
+  .sec .v b{color:var(--ink);font-weight:600}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px}
+  .meta a{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:4px 9px;background:#fcfcfd;font-family:var(--mono);font-size:11.5px}
+  .meta a:hover{border-color:var(--b1);text-decoration:none}
+  .meta a.out{background:#e6f4ff;border-color:#91caff;color:#0958d9}
+  .card .foot{margin-top:auto;padding:10px 16px;border-top:1px solid var(--line2);font-size:11.5px;color:var(--ink3);font-family:var(--mono)}
+
+  footer{max-width:1220px;margin:8px auto 0;display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink3)}
+  @media print{body{background:#fff;padding:0}.card,.panel{box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BugVault show-me 图纸索引 — 链路 07–12
+      <small>离线可视化证据 — 每张图对应一条拷打链路</small>
+    </h1>
+    <p class="lede">本页索引 BugVault 的 6 张 <code>show-me-NN-*.html</code> 图纸。每张图都是<b>单文件 HTML，无 CDN、无外链，可离线打开、可打印 PDF</b>：面试被追问时直接点开对应图纸指给人看，不需要联网、不需要起服务。
+      每张图顶部导航都含回到本索引的「图纸索引」入口，并横链同批其余图纸。</p>
+    <nav class="top">
+      <a href="show-me-07-problem-and-boundary.html">07 问题与产品边界</a>
+      <a href="show-me-08-mcp-stdio.html">08 MCP 与客户端集成</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a href="show-me-11-eval-credibility.html">11 评测可信度</a>
+      <a href="show-me-12-runtime-reliability.html">12 运行时资源边界</a>
+    </nav>
+  </header>
+
+  <section class="panel">
+    <span class="pt">读图约定</span>
+    <p class="pdesc">「对应工单」链接到仓库外的 show-me 工单原文（<code>准备清单/show-me/issues/</code>）；「产出图纸」链接到本目录下的 HTML 文件。图纸内证据精确到 <code>文件:行号</code>，并把「代码证据」与「文档口径」分开标；所有行号基于当前工作区，图纸生成时只读代码与文档，未运行测试 / 服务 / 模型。</p>
+    <div class="legend">
+      <span class="it"><span class="lv ok">已有图纸</span>6 张均已产出并通过离线自查</span>
+      <span class="it"><span class="lv code">代码权威</span>链路以代码为主要证据</span>
+      <span class="it"><span class="lv part">文档口径</span>定位/边界类，偏文档证据</span>
+    </div>
+  </section>
+
+  <div class="grid">
+
+    <article class="card">
+      <div class="top">
+        <span class="num">07</span>
+        <span class="tt">问题发现与产品边界<small>Why a dedicated engineering memory</small></span>
+        <span class="lv part">文档口径</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">三栏结构卡：<b>痛点</b>（跨会话经验断层、已修 Bug 再犯、规约反复违反、规则塞 prompt 放不下）→ <b>替代方案对比</b>（Markdown 搜索、通用记忆 MCP、<code>.cursorrules</code>、Agent Memory Bank）→ <b>硬边界</b>（不做规划、不改业务代码、不跑 Agent Loop）；并列出「什么场景不适合」。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/07-problem-and-product-boundary.md">对应工单 · 07-problem-and-product-boundary.md</a>
+          <a class="out" href="show-me-07-problem-and-boundary.html">产出图纸 · show-me-07-problem-and-boundary.html</a>
+        </div>
+      </div>
+      <div class="foot">三栏结构图 · 语义配色 · 证据来源 24 条脚注</div>
+    </article>
+
+    <article class="card">
+      <div class="top">
+        <span class="num">08</span>
+        <span class="tt">MCP 协议与客户端集成<small>JSON-RPC over stdio</small></span>
+        <span class="lv code">代码权威</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">一次 stdio 交互的四阶段时序：<b>进程启动</b> → <b>initialize 握手</b> → <b>tools/list 发现</b> → <b>tools/call 调用与返回</b>；旁注 stdout 保护（<code>_MCPStdoutProxy</code>）、4+1 工具清单、参数校验两层落点、以及 traceId / ErrorCode / JSONL 错误返回契约。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/08-mcp-protocol-and-client-integration.md">对应工单 · 08-mcp-protocol-and-client-integration.md</a>
+          <a class="out" href="show-me-08-mcp-stdio.html">产出图纸 · show-me-08-mcp-stdio.html</a>
+        </div>
+      </div>
+      <div class="foot">时序图 25 步 · 左步号栅格 + 图下按序脚注</div>
+    </article>
+
+    <article class="card">
+      <div class="top">
+        <span class="num">09</span>
+        <span class="tt">数据模型、记忆写入与索引一致性<small>Save path and index lag</small></span>
+        <span class="lv code">代码权威</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">保存链路四步：<b>Pydantic 校验</b> → <b>同步 Markdown 归档</b> → <b>后台异步向量化</b>（<code>create_task</code>）→ <b>可选图投影</b>；配「权威数据 vs 索引投影」对照卡，解释为什么区分 <code>error_log</code> 与语义块、以及「先返回成功 ≠ 已可检索」。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/09-data-model-and-index-consistency.md">对应工单 · 09-data-model-and-index-consistency.md</a>
+          <a class="out" href="show-me-09-save-and-index.html">产出图纸 · show-me-09-save-and-index.html</a>
+        </div>
+      </div>
+      <div class="foot">时序图 + 对照卡 · 数据模型速查 + 红色边界区</div>
+    </article>
+
+    <article class="card">
+      <div class="top">
+        <span class="num">10</span>
+        <span class="tt">混合检索与排序优化<small>Vector + BM25 + RRF + Cross-Encoder</small></span>
+        <span class="lv code">代码权威</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">一次 <code>retrieve</code> 的六步主链路：embedding → 元数据过滤 → 向量 ANN + FTS(BM25) 双路召回（各 <code>top_k×4</code>）→ <b>RRF 融合（k=60）</b> → 父文档回捞 → <b>可选 Cross-Encoder 精排</b> → Top-K；配「各路增强解决什么 / 失败如何降级」对照表。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/10-hybrid-retrieval-and-ranking.md">对应工单 · 10-hybrid-retrieval-and-ranking.md</a>
+          <a class="out" href="show-me-10-hybrid-retrieval.html">产出图纸 · show-me-10-hybrid-retrieval.html</a>
+        </div>
+      </div>
+      <div class="foot">六步时序图 · 六条泳道 + 两层排序标注</div>
+    </article>
+
+    <article class="card">
+      <div class="top">
+        <span class="num">11</span>
+        <span class="tt">评测方法与结论可信度<small>Offline benchmark and bad cases</small></span>
+        <span class="lv code">代码权威</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">离线 benchmark 的实验设计与口径：81 条合成 Bug / 100 查询（Fact 40 + Cross-Doc 30 + No-Answer 30）、三管线（vector-only / hybrid / full）、指标定义（Recall@1/3/5、MRR、NDCG@5），并红标 <b>No-Answer 正确拒答率 0.00%</b> 的 Bad Case 归因与报告自相矛盾。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/11-eval-method-and-credibility.md">对应工单 · 11-eval-method-and-credibility.md</a>
+          <a class="out" href="show-me-11-eval-credibility.html">产出图纸 · show-me-11-eval-credibility.html</a>
+        </div>
+      </div>
+      <div class="foot">三面板 + 1–16 号脚注 · 红色标注无效结论</div>
+    </article>
+
+    <article class="card">
+      <div class="top">
+        <span class="num">12</span>
+        <span class="tt">Python 工程可靠性与资源管理<small>Async/thread boundary and guardrails</small></span>
+        <span class="lv code">代码权威</span>
+      </div>
+      <div class="body">
+        <div class="sec"><span class="k">画的是哪条链路</span><span class="v">运行时资源边界图（<b>asyncio 事件循环</b> vs <b>ThreadPoolExecutor</b>）+ 一次调用九步时序：覆盖 ONNX 懒加载 / 单例、<code>thread_pool_workers</code> 并发上限与排队、traceId + ErrorCode + JSONL 护栏、多级降级、以及 <code>stdout_guard</code> 的 stdio 安全。</span></div>
+        <div class="meta">
+          <a href="../../../../nwu/work/准备清单/show-me/issues/12-python-runtime-reliability.md">对应工单 · 12-python-runtime-reliability.md</a>
+          <a class="out" href="show-me-12-runtime-reliability.html">产出图纸 · show-me-12-runtime-reliability.html</a>
+        </div>
+      </div>
+      <div class="foot">资源边界图 + 九步时序图 · 两张图</div>
+    </article>
+
+  </div>
+</div>
+
+<footer>
+  <span>BugVault show-me 图纸索引 — 链路 07–12 · 单文件离线 HTML，无 CDN / 无外链</span>
+  <span>对应工单目录：<code>准备清单/show-me/issues/</code> · 图纸目录：<code>BugVault/docs/</code></span>
+  <span>生成路径：<code>docs/show-me-index.html</code></span>
+</footer>
+</body>
+</html>

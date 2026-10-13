@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>MCP 协议与客户端集成，BugVault stdio 握手与工具调用时序</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1220px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:24px}
+  h1{font-size:clamp(20px,3vw,27px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-top:6px}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:88ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;box-shadow:var(--shadow);color:var(--ink2)}
+  nav.top a.on{border-color:var(--b1);color:var(--b1);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;border-left:3px solid var(--pc,var(--b1))}
+  .p1{--pc:var(--b1)}.p2{--pc:var(--b2)}.p3{--pc:var(--b5)}.p4{--pc:var(--b4)}.p5{--pc:var(--warn)}
+  .phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .phead .pt{font-size:15.5px;font-weight:700}
+  .phead .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:var(--b1);border:1px solid #adc6ff;font-weight:600}
+  .phead .tag.warn{background:var(--warnbg);color:var(--warn);border-color:#ffbb96}
+  .phead .tag.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .phead .src{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .pdesc{font-size:13px;color:var(--ink2);margin:6px 0 16px}
+  .pdesc code,td code,li code,.kv code,.layer code,.chain code,pre.json code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px;margin-top:4px;align-items:baseline}
+  .kv .k{font-family:var(--mono);font-size:11.5px;color:var(--b1);white-space:nowrap}
+  .kv .v{color:var(--ink2);overflow-wrap:anywhere}.kv .v b{color:var(--ink);font-weight:600}
+  .facts code,.layer code,.chain code,.finding code,.pdesc code,pre.json,.noteband{overflow-wrap:anywhere}
+
+  /* ---------------- 时序图 ---------------- */
+  .seqwrap{overflow-x:auto;padding-bottom:4px}
+  .seq{position:relative;min-width:1150px}
+  .ph{position:absolute;top:0;transform:translateX(-50%);background:#fff;border:1px solid var(--line);
+      border-radius:9px;padding:7px 6px;text-align:center;line-height:1.25;z-index:4}
+  .ph b{display:block;font-size:11.5px;font-weight:700}
+  .ph span{display:block;font-size:9.5px;color:var(--ink3);font-family:var(--mono);margin-top:1px}
+  .ph.actor{border-color:#adc6ff;color:var(--b1);box-shadow:0 0 0 3px #eef4ff}
+  .ll{position:absolute;border-left:1.5px dashed #d6dae0;z-index:1}
+  .step{position:absolute;left:0;width:30px;text-align:right;z-index:5}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .step.grp .n{background:var(--b1);color:#fff}
+  .gbracket{position:absolute;left:33px;border-left:2px solid #cfd6df;border-radius:2px}
+  .gband{position:absolute;right:0;background:#f0f5ff;border:1px solid #d6e4ff;color:var(--b1);border-radius:7px;
+    font-size:11.5px;font-weight:700;padding:5px 11px;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .noteband{position:absolute;right:8px;background:#fafbfc;border:1px dashed #d6dae0;border-radius:8px;font-size:11.5px;
+    color:var(--ink2);padding:6px 11px;line-height:1.45;overflow:hidden;z-index:2}
+  .noteband b{color:var(--ink);font-weight:600}
+  .noteband code{font-family:var(--mono);font-size:11px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .msg{position:absolute;z-index:3}
+  .msg .lbl{position:absolute;left:8px;right:8px;bottom:8px;font-size:11px;color:var(--ink2);line-height:1.28;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .msg .lbl b{color:var(--ink);font-weight:600}
+  .msg .line{position:absolute;bottom:4px;left:0;right:0;height:0;border-top:2.2px solid #6b7280}
+  .msg .line::after{content:"";position:absolute;top:-5.5px;border:5.5px solid transparent}
+  .msg.fwd .line::after{right:-1px;border-left-color:#6b7280}
+  .msg.back .line::after{left:-1px;border-right-color:#6b7280}
+  .msg.ret .line{border-top-style:dashed;border-top-width:1.8px;border-top-color:#9aa4b2}
+  .msg.ret.fwd .line::after{border-left-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .msg.ret.back .line::after{border-right-color:#9aa4b2;top:-4.5px;border-width:4.5px}
+  .legend{margin-top:14px;font-size:11.5px;color:var(--ink3);display:flex;gap:18px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:12px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg-solid{display:inline-block;width:26px;border-top:2.2px solid #6b7280}
+  .lg-dash{display:inline-block;width:26px;border-top:2px dashed #9aa4b2}
+  .lg-note{display:inline-block;width:26px;height:11px;border:1px dashed #cbd5e1;background:#fafbfc;border-radius:3px}
+  .lg-gut{display:inline-block;width:20px;height:12px;border-radius:4px;background:var(--b1)}
+
+  /* ---------------- 图下脚注 ---------------- */
+  .facts{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+  .facts h3{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:600;margin-bottom:11px}
+  .facts h4{font-size:12px;font-weight:700;color:var(--ink2);margin:14px 0 7px;padding-bottom:5px;border-bottom:1px dashed var(--line)}
+  .facts h4:first-of-type{margin-top:0}
+  .facts ol{list-style:none;display:grid;gap:9px}
+  .facts li{display:flex;gap:11px;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .facts .fn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 6px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+  .facts li b{color:var(--ink);font-weight:600}
+  .facts li .hl{color:var(--warn);font-weight:600}
+
+  /* ---------------- 对照表 / 发现 ---------------- */
+  table.cmp{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+  table.cmp th,table.cmp td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  table.cmp th{font-size:11px;letter-spacing:.05em;color:var(--ink3);font-weight:600}
+  table.cmp td:first-child{color:var(--ink);font-weight:600;width:20%}
+  table.cmp .inc{display:inline-block;font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px;vertical-align:middle}
+  table.cmp .inc.on{background:#f6ffed;color:#389e0d;border:1px solid #b7eb8f}
+  table.cmp .inc.cfg{background:#e6f4ff;color:#0958d9;border:1px solid #91caff}
+  table.cmp .inc.dead{background:var(--warnbg);color:var(--warn);border:1px solid #ffbb96}
+  .mono{font-family:var(--mono);font-size:11.5px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  .layer{border:1px solid var(--line);border-radius:11px;padding:12px 14px;background:#fcfdff}
+  .layer .lt{font-size:12.5px;font-weight:700;margin-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .layer .badge{font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 7px;border:1px solid}
+  .layer.l1 .badge{background:#e6f4ff;color:#0958d9;border-color:#91caff}
+  .layer.l2 .badge{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .layer ul{margin:6px 0 0;padding-left:16px;font-size:12.5px;color:var(--ink2);display:grid;gap:6px}
+  .layer .st{font-size:11px;color:var(--ink3);margin-top:8px}
+
+  .chain{display:grid;gap:8px;margin-top:8px}
+  .chain .c{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--ink2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fcfdff}
+  .chain .c .num{flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--b1);color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+  .chain .c b{color:var(--ink);font-weight:600}
+
+  pre.json{margin-top:8px;background:#0f172a;color:#e2e8f0;border-radius:10px;padding:13px 15px;font-family:var(--mono);font-size:11.5px;line-height:1.55;overflow-x:auto}
+  pre.json .k{color:#93c5fd}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .two h4{font-size:11.5px;color:var(--ink3);font-weight:600;margin-bottom:2px}
+
+  .finding{border-left:3px solid var(--warn);background:#fff9f5;border-radius:0 10px 10px 0;padding:12px 15px;font-size:13px;color:var(--ink2);margin-top:16px}
+  .finding b{color:var(--warn)}
+  .finding ul{margin:8px 0 0 0;padding-left:18px;display:grid;gap:8px}
+  .finding code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:3px;padding:0 3px}
+  .finding .gap{display:inline-block;font-size:10.5px;font-weight:700;color:#fff;background:var(--warn);border-radius:5px;padding:1px 6px;margin-right:6px}
+  .finding .gap.pending{background:#fa8c16}
+  footer{margin-top:32px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px 18px}
+  footer code{font-family:var(--mono);font-size:11.5px;background:#fff;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  @media(max-width:960px){body{padding:22px 14px 44px}.panel{padding:16px 15px}.phead .src{margin-left:0;width:100%}}
+  @media(max-width:720px){
+    .grid2,.two{grid-template-columns:1fr}
+    .kv{grid-template-columns:1fr;gap:2px 0}
+    .kv .k{white-space:normal;margin-top:9px}
+    pre.json{font-size:10px;padding:11px 12px}
+    .kv .v{margin-bottom:2px}
+    table.cmp thead{display:none}
+    table.cmp tr{display:block;border-bottom:1px solid var(--line);padding:9px 0}
+    table.cmp td{display:block;border:none;padding:2px 0;width:auto!important}
+    table.cmp td::before{content:attr(data-label) "：";color:var(--ink3);font-size:10.5px;font-weight:600;letter-spacing:.04em}
+    table.cmp td:first-child{font-size:14px;margin-bottom:3px}
+    .facts li{font-size:12px}
+  }
+  @media print{body{background:#fff;padding:0}.panel{box-shadow:none;break-inside:avoid}.seqwrap{overflow:visible}@page{margin:12mm}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>MCP 协议与客户端集成：stdio 上的 JSON-RPC 握手与工具调用
+      <small>BugVault，链路 08，四阶段时序图 + 工具清单 + 校验与错误契约</small>
+    </h1>
+    <p class="lede">客户端按 <code>mcpServers</code> 配置把 BugVault 拉成<b>本地子进程</b>，双方在 stdio 上用换行分隔的 JSON-RPC 通信：<b>进程启动 → <code>initialize</code> 握手 → <code>tools/list</code> 发现 → <code>tools/call</code> 调用与返回</b>。图上每个类名、字段名、行号都来自当前代码；本页只读代码与文档，不启动服务、不加载模型，需要运行才能确认的数字标「待核验」。文档与代码不一致处标红，并记入工单的 <code>## Answer</code> 段。</p>
+    <nav class="top">
+      <a href="show-me-index.html">&larr; 图纸索引</a>
+      <a class="on" href="show-me-08-mcp-stdio.html">08 MCP 协议与客户端集成</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a href="show-me-11-eval-credibility.html">11 评测可信度</a>
+    </nav>
+  </header>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">传输与开关现状</span><span class="tag">config.py</span><span class="src">config.py:40–67，stdout_guard.py:20</span></div>
+    <p class="pdesc">下列取值均为代码默认值（<code>.env.example</code> 里同样默认注释掉、不覆盖默认）。标「待核验」者需要真正拉起进程才能确认运行时取值。</p>
+    <div class="kv">
+      <span class="k">传输形态</span><span class="v"><b>stdio 本地子进程</b>，不开 HTTP 端口：<code>config.py</code> 无 host / port 字段，入口只有 <code>mcp.server.stdio.stdio_server()</code>（main.py:81）</span>
+      <span class="k">settings.server_name</span><span class="v"><b>bugvault</b>（config.py:43）→ <code>Server("bugvault")</code>（main.py:77）</span>
+      <span class="k">settings.server_version</span><span class="v"><b>2.0.0</b>（config.py:44）→ 握手应答里的 <code>serverInfo.version</code></span>
+      <span class="k">settings.enable_reflection_tool</span><span class="v"><b>True</b>（config.py:67）→ 工具数 <b>4 + 1 = 5</b>；置 false 后 <code>reflection_svc=None</code>，只暴露 4 个</span>
+      <span class="k">settings.enable_async_embedding</span><span class="v"><b>True</b>（config.py:47）→ save 走后台 embedding（tools.py:442–455）</span>
+      <span class="k">settings.enable_rag_eval</span><span class="v"><b>False</b>（config.py:50）→ retrieve 后的评估默认不跑</span>
+      <span class="k">settings.thread_pool_workers</span><span class="v"><b>2</b>（config.py:40）→ 业务同步调用都在这个池里排队（main.py:41–44）</span>
+      <span class="k">TQDM_DISABLE</span><span class="v"><b>1</b>，import 期强制设置（stdout_guard.py:20），防止进度条污染协议流</span>
+    </div>
+  </section>
+
+  <section class="panel p2">
+    <div class="phead"><span class="pt">图 A — 四阶段时序：Client 子进程 ↔ BugVault stdio 服务</span><span class="tag">Sequence</span><span class="src">main.py:23–93，tools.py:203–412，stdout_guard.py:23–74</span></div>
+    <p class="pdesc">左侧数字 = 步号，解释见图下按序号对照的脚注；灰色虚线带是模块内部动作或代码事实说明，不跨进程。移动端可横向滑动查看。</p>
+    <div class="seqwrap"><div class="seq" id="seqMain"></div></div>
+    <div class="legend">
+      <span><i class="lg-solid"></i>JSON-RPC 请求 / 响应</span>
+      <span><i class="lg-dash"></i>返回</span>
+      <span><i class="lg-note"></i>模块内部动作或事实说明</span>
+      <span><i class="lg-gut"></i>左侧步号（对应图下脚注编号）</span>
+    </div>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">工具清单：4 个基础工具 + 1 个可配置反思工具</span><span class="tag ok">tools.py:236–303</span><span class="src">tools.py:41–195,236–303</span></div>
+    <p class="pdesc">工具的「何时调用」不靠外部文档，而是写进每个 tool 的 <code>description</code>（tools.py:241–251 起，内置决策树）。<code>required</code> 一列直接来自各 <code>inputSchema</code>。</p>
+    <table class="cmp">
+      <thead><tr><th>工具</th><th>开关状态</th><th>required（JSON Schema）</th><th>inputSchema</th><th>处理入口</th></tr></thead>
+      <tbody>
+        <tr><td data-label="工具">retrieve_bug_experience</td><td data-label="开关"><span class="inc on">常开</span></td><td data-label="required">query</td><td data-label="schema"><span class="mono">_RETRIEVE_SCHEMA tools.py:41（required :86）</span></td><td data-label="入口"><span class="mono">:327→_handle_retrieve :518</span></td></tr>
+        <tr><td data-label="工具">save_bug_experience</td><td data-label="开关"><span class="inc on">常开</span></td><td data-label="required">bug_title, error_log_snippet, tried_methods, final_solution</td><td data-label="schema"><span class="mono">_SAVE_SCHEMA :89（required :100）</span></td><td data-label="入口"><span class="mono">:332→_handle_save_record :420（"bug"）</span></td></tr>
+        <tr><td data-label="工具">save_convention</td><td data-label="开关"><span class="inc on">常开</span></td><td data-label="required">convention_name, trigger_context, incorrect_behavior, correct_behavior</td><td data-label="schema"><span class="mono">_CONVENTION_SAVE_SCHEMA :103（required :131）</span></td><td data-label="入口"><span class="mono">:342→_handle_save_record（"convention"）</span></td></tr>
+        <tr><td data-label="工具">retrieve_convention</td><td data-label="开关"><span class="inc on">常开</span></td><td data-label="required">query</td><td data-label="schema"><span class="mono">_CONVENTION_RETRIEVE_SCHEMA :134（required :162）</span></td><td data-label="入口"><span class="mono">:352→_handle_retrieve_convention :581</span></td></tr>
+        <tr><td data-label="工具">reflect_and_prevent_error</td><td data-label="开关"><span class="inc cfg">仅 reflection 开启时追加，默认开启（config.py:67）</span></td><td data-label="required">reflection_text, error_category, preventive_rule</td><td data-label="schema"><span class="mono">_REFLECT_SCHEMA :165（required :194）</span></td><td data-label="入口"><span class="mono">:356→_sync_reflect :790</span></td></tr>
+      </tbody>
+    </table>
+    <div class="finding" style="border-left-color:var(--b1);background:#f7fbff">
+      <ul style="padding-left:0;list-style:none;margin:0">
+        <li>追加逻辑：<code>if reflection_svc is not None: tools.append(...)</code>（tools.py:288–301）；而 <code>reflection_svc</code> 只在 <code>settings.enable_reflection_tool</code> 为真时构建（main.py:59–62）。</li>
+        <li>反思工具的输出写在 <code>~/.bugvault/CLAUDE.md</code> 的 <code>## Bug Prevention Rules</code> 章节（reflection_svc.py:25,32,40–56），不落 LanceDB；它是客户端指令文件，属 CONTEXT.md 定义的「Prevention rule」派生输出。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel p4">
+    <div class="phead"><span class="pt">参数校验的两层落点</span><span class="tag warn">第一层不强制</span><span class="src">tools.py:41–195，persistence_svc.py:135–150</span></div>
+    <p class="pdesc">两层分工不同：<b>第一层是给客户端/模型看的契约</b>，<b>第二层才是服务端真正的拦截点</b>。</p>
+    <div class="grid2">
+      <div class="layer l1">
+        <div class="lt"><span class="badge">第一层</span>MCP inputSchema（JSON Schema）</div>
+        <ul>
+          <li>随 <code>tools/list</code> 返回，告诉客户端参数名、类型与 <code>required</code>（tools.py:41,89,103,134,165；如 <code>_RETRIEVE_SCHEMA.required=["query"]</code> :86）。</li>
+          <li><code>enum</code> 也是契约的一部分：<code>eval_depth ∈ none/simple/claim_level</code>（:51–60），<code>error_category</code> 5 个取值（:175–185）。</li>
+        </ul>
+        <div class="st">实况：仓库里只有 5 处 <code>inputSchema=</code> 赋值，没有任何 JSON Schema 校验调用；<span class="mono">不满足 schema 的参数不会被服务端按 schema 拒绝</span>。</div>
+      </div>
+      <div class="layer l2">
+        <div class="lt"><span class="badge">第二层</span>Pydantic 模型校验（硬 + 软）</div>
+        <ul>
+          <li>硬校验：<code>BugRecord(**arguments)</code> / <code>ConventionRecord(**arguments)</code>（persistence_svc.py:136）；字段长度约束在 bug_record.py:31–60、convention_record.py:36–60。</li>
+          <li>软校验：<code>missing_required_fields()</code>（bug_record.py:108–114 只查 <code>tried_methods</code> / <code>final_solution</code>；convention_record.py:114–120 只查 <code>incorrect_behavior</code> / <code>correct_behavior</code>）→ 命中即 draft。</li>
+          <li>失败落点：<code>PreparedRecord(record=None, validation_error=str(exc))</code>（persistence_svc.py:137–142）；draft 落点 <code>missing_fields</code>（:144–150）。</li>
+        </ul>
+        <div class="st">返回文案：非法 <code>Invalid record: ...</code> / <code>Invalid convention: ...</code>（tools.py:471–482）；draft <code>saved as draft. Missing fields: ...</code>（:484–493）。</div>
+      </div>
+    </div>
+    <div class="finding"><b>落差</b>（写入工单 Answer）
+      <ul>
+        <li><span class="gap">第一层空转</span><code>inputSchema</code> 只对外暴露，服务端不校验；客户端传错参数时第一层不会拦截，实际由 Pydantic 拒绝，报错文案是 Python 校验信息而非 schema 违规说明。</li>
+        <li><span class="gap">检索类不建模</span><code>retrieve_bug_experience</code> / <code>retrieve_convention</code> 不构造 Pydantic 模型，只做 <code>arguments.get("query", "")</code>（tools.py:527–530、594–595），空值由检索层兜底（retrieval_svc.py:68–71）。</li>
+        <li><span class="gap">反思工具无模型</span><code>reflect_and_prevent_error</code> 走 <code>_sync_reflect</code> 手工判空（tools.py:792–800）；<code>PreventionRule</code> 模型已定义但全仓库无实例化引用（reflection_rule.py:8）。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel p5">
+    <div class="phead"><span class="pt">错误返回契约：trace_id → ErrorCode → JSONL</span><span class="tag warn">分类存在不可达分支</span><span class="src">tools.py:309–412，observability.py:126–235，error_code.py:12–31</span></div>
+    <p class="pdesc">每次 <code>tools/call</code> 进入时生成 trace_id，退出时按 <code>ErrorCode</code> 分类写一行 JSONL；同一 trace_id 也进入该请求的所有日志行。</p>
+    <div class="chain">
+      <div class="c"><span class="num">1</span><span><b>生成 trace_id</b>：<code>set_trace_id()</code> 取 <code>uuid4().hex[:12]</code> 写入 contextvar（logger.py:32–40），<code>TraceIdFilter</code> 把它注入每条日志（logger.py:50–57）。</span></div>
+      <div class="c"><span class="num">2</span><span><b>分类</b>：成功路径硬编码 <code>status="ok", error_code="ok"</code>（tools.py:379–384）；异常路径 <code>_classify_error(exc)</code> 按关键词匹配（observability.py:217–235）。</span></div>
+      <div class="c"><span class="num">3</span><span><b>落盘</b>：<code>AiCallLogEntry(event_type="entry"|"exit", ...)</code>（observability.py:77–118）经 <code>append_ai_call_log</code> 追加到 <code>{data_root}/log/ai_call.jsonl</code>（:126–139），默认 <code>~/.bugvault/log/ai_call.jsonl</code>（config.py:19）；entry 会剔除 <code>eval_llm_api_key</code>（tools.py:319）。</span></div>
+    </div>
+    <table class="cmp" style="margin-top:14px">
+      <thead><tr><th>ErrorCode（error_code.py:16–31）</th><th>分类触发</th><th>是否可达</th></tr></thead>
+      <tbody>
+        <tr><td data-label="ErrorCode"><span class="mono">ok</span></td><td data-label="触发">成功返回，硬编码字符串（tools.py:381）</td><td data-label="可达"><span class="inc on">可达</span></td></tr>
+        <tr><td data-label="ErrorCode"><span class="mono">rate_limited / timeout / auth_fail / content_safety / parse_error / internal</span></td><td data-label="触发">异常消息关键词：rate limit、timeout、auth、content+safety、parse/json/decode，兜底 internal（observability.py:224–235）</td><td data-label="可达"><span class="inc on">可达</span></td></tr>
+        <tr><td data-label="ErrorCode"><span class="mono">validation_error</span></td><td data-label="触发">枚举已定义（error_code.py:26），但 <code>_classify_error</code> 从不返回它；校验失败走正常 return</td><td data-label="可达"><span class="inc dead">不可达</span></td></tr>
+        <tr><td data-label="ErrorCode"><span class="mono">not_found</span></td><td data-label="触发">枚举已定义（:30）；空结果也是正常 return，日志记 ok</td><td data-label="可达"><span class="inc dead">不可达</span></td></tr>
+        <tr><td data-label="ErrorCode"><span class="mono">quota_exceeded</span></td><td data-label="触发">枚举已定义（:31）；claim_level 配额耗尽在评测层降级为 <code>simple (fallback_from_error)</code>（rag_evaluator_svc.py:593–615），不走该码</td><td data-label="可达"><span class="inc dead">不可达</span></td></tr>
+      </tbody>
+    </table>
+    <div class="finding"><b>落差</b>（写入工单 Answer）
+      <ul>
+        <li><span class="gap">失败记成功</span>非法参数与空检索结果都经正常 return 收尾，exit 日志写 <code>status="ok", error_code="ok"</code>（tools.py:376–390），JSONL 里看不出这次调用实际没交付内容。</li>
+        <li><span class="gap">异常包成文本</span>异常被包成 <code>Error executing {name}: {exc}</code> 的 TextContent 返回（tools.py:409–412），不抛 JSON-RPC error 对象；是否标记 <code>isError</code> 由 mcp SDK 决定，仓库未显式设置。</li>
+        <li><span class="gap">trace 不回传</span><code>trace_id</code> 只进服务端日志与 JSONL（tools.py:310,322；observability.py:103），结果文本里没有，客户端无法凭返回内容关联到服务端日志。</li>
+        <li><span class="gap">子串误判</span><code>auth</code> / <code>content</code> 等判定是子串匹配（observability.py:228–231），普通报错里出现这些词会被误分类。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel p1">
+    <div class="phead"><span class="pt">客户端接入：一份 mcpServers 片段，处处运行</span><span class="tag">README.md:155–171,462–477</span><span class="src">README.md:158–171，462–477</span></div>
+    <p class="pdesc">客户端只需要知道「怎么启动这个子进程」；工具集、参数与说明都在 <code>tools/list</code> 里自描述（tools.py:236）。所以同一段配置（仅 <code>--directory</code> 路径不同）可直接粘进任一支持 MCP stdio 的客户端，不需要为 BugVault 写适配代码。</p>
+    <div class="two">
+      <div>
+        <h4>写法 A：命令行里有 uv（README.md:158–171）</h4>
+        <pre class="json">{
+  "mcpServers": {
+    "bugvault": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}</pre>
+      </div>
+      <div>
+        <h4>写法 B：绝对路径更稳（README.md:462–475）</h4>
+        <pre class="json">{
+  "mcpServers": {
+    "bugvault": {
+      "command": "/path/to/uv",
+      "args": [
+        "run",
+        "--directory", "/absolute/path/to/bugvault",
+        "python", "-m", "bugvault.main"
+      ]
+    }
+  }
+}</pre>
+      </div>
+    </div>
+    <div class="kv" style="margin-top:14px">
+      <span class="k">配置位置</span><span class="v">Claude Code：<code>~/.claude/settings.json</code>；Claude Desktop（macOS）：<code>~/Library/Application Support/Claude/claude_desktop_config.json</code>（README.md:477）</span>
+      <span class="k">一次编写，处处运行的边界</span><span class="v">只对支持 MCP stdio 传输的客户端成立；BugVault 不主动连接任何客户端，<b>客户端不调用工具时它什么都不做</b>（CONTEXT.md BugVault boundary）</span>
+      <span class="k">验证程度</span><span class="v">仓库内只有 <code>tests/test_mcp_protocol.py</code> 的 initialize 冒烟测试，<b>没有第三方客户端的发现 / 调用集成测试</b>；本页标为「单元级证据」，不写「多客户端已验证」</span>
+    </div>
+  </section>
+
+  <section class="panel p5">
+    <div class="phead"><span class="pt">落差清单（图纸标注，回写工单 Answer）</span><span class="tag warn">文档与代码不一致以代码为准</span><span class="src">tests/test_mcp_protocol.py，tools.py，observability.py</span></div>
+    <div class="finding" style="margin-top:0">
+      <ul>
+        <li><span class="gap">证据等级</span><code>tests/test_mcp_protocol.py</code> 只断言 initialize 应答文本里含 <code>"bugvault"</code> 与 <code>"result"</code>（:66–74），并靠 <code>time.sleep(12.0)</code> 等模型加载（:54）；没有 <code>tools/list</code> / <code>tools/call</code> 的真实客户端集成测试。图上「协议正确性」= 单元级证据。</li>
+        <li><span class="gap">传输细节</span>测试注释指出实际传输是<b>换行分隔 JSON</b>，不是规范里的 <code>Content-Length</code> 帧格式（:3–4、:56）；<code>_MCPStdoutProxy</code> 的白名单同时放行两种前缀（stdout_guard.py:61）。</li>
+        <li><span class="gap">校验错位</span>两层校验中第一层（inputSchema）不参与服务端决策，真正的拦截全在 Pydantic 层；详见「参数校验」面板。</li>
+        <li><span class="gap">日志错位</span>非法参数 / 空结果记为成功，<code>validation_error</code> / <code>not_found</code> / <code>quota_exceeded</code> 三个枚举值在 MCP 链路不可达；详见「错误返回契约」面板。</li>
+        <li><span class="gap">文案复用</span><code>retrieve_convention</code> 空结果复用了 bug 的文案 <code>"No matching bug experiences found in the knowledge base."</code>（tools.py:614，对照 bug 路径 :546–549）。</li>
+        <li><span class="gap">部署形态</span>当前交付形态只有 stdio 本地进程，无 Docker / 远程部署、无 HTTP 端口（工单「已知落差」；<code>config.py</code> 无 host / port 字段）。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>BugVault，链路 08，MCP 协议与客户端集成</span>
+    <span>源码证据：<code>main.py</code>，<code>mcp_tools/tools.py</code>，<code>utils/stdout_guard.py</code>，<code>observability.py</code>，<code>models/error_code.py</code>，<code>utils/logger.py</code>，<code>services/persistence_svc.py</code></span>
+    <span>只读代码与文档，未修改业务代码，未运行测试与服务</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var ACTORS=[
+    {k:'client',name:'MCP Client',sub:'Claude Code / Cursor'},
+    {k:'main',name:'main.py',sub:'Server("bugvault")'},
+    {k:'guard',name:'_MCPStdoutProxy',sub:'sys.stdout 代理'},
+    {k:'tools',name:'tools.py handlers',sub:'list_tools / call_tool'},
+    {k:'model',name:'Pydantic 模型',sub:'BugRecord / ConventionRecord'},
+    {k:'obs',name:'observability',sub:'ai_call.jsonl'}
+  ];
+  var PHASES=[
+    {n:'1',title:'阶段 1 进程启动：Client 拉起子进程并保护 stdout',rows:[
+      {t:'msg',from:'client',to:'main',kind:'req',label:'spawn：<b>python -m bugvault.main</b>（README.md:158–171）',
+       foot:'客户端按 <code>mcpServers</code> 配置把 BugVault 拉成子进程：<code>uv run --directory &lt;repo&gt; python -m bugvault.main</code>（README.md:158–171）。这是本链路唯一的进程边界，BugVault 不监听端口（工单「已知落差」）。'},
+      {t:'msg',from:'main',to:'guard',kind:'req',label:'import 期装入全局代理 <b>sys.stdout</b>（stdout_guard.py:72–74）',
+       foot:'<code>main.py</code> 的第一个 import 就是 stdout 保护（main.py:23），注释明确要求它先于任何第三方库（main.py:17–21）；import 的副作用是完成安装（stdout_guard.py:72–74），并设 <code>TQDM_DISABLE=1</code>（:20）。'},
+      {t:'note',label:'按开关构建服务：<b>LanceDBClient</b>（main.py:47–48）、<b>EmbeddingService</b>（:52–55）、<b>ReflectionService</b>（:59–62）、<b>RAGEvaluator</b>（:65–67）、<b>get_graph_db</b>（:70–74）',
+       foot:'服务按开关构建：<code>LanceDBClient().initialize()</code>（main.py:47–48）；<code>EmbeddingService</code> 仅当 <code>enable_async_embedding</code>（:52–55）；<code>ReflectionService</code> 仅当 <code>enable_reflection_tool</code>（:59–62）；<code>RAGEvaluator()</code>（:65–67）；<code>get_graph_db()</code>（:70–74）。线程池 <code>max_workers=settings.thread_pool_workers=2</code>（:41–44、config.py:40）。'},
+      {t:'msg',from:'main',to:'tools',kind:'req',label:'<b>Server("bugvault")</b> + <b>register_tools(...)</b>（main.py:77–78）',
+       foot:'<code>Server(settings.server_name)</code> 即 <code>Server("bugvault")</code>（main.py:77、config.py:43）；随后 <code>register_tools(server, db, embedding_svc, reflection_svc, rag_evaluator, graph_db, executor)</code>（main.py:78），注册函数在 tools.py:203。'},
+      {t:'msg',from:'main',to:'guard',kind:'req',label:'<b>stdio_server()</b> → (read_stream, write_stream)（main.py:81）',
+       foot:'<code>stdio_server()</code> 是异步上下文管理器，产出 <code>(read_stream, write_stream)</code>，交给 <code>server.run(...)</code>，并附 <code>InitializationOptions(server_name, server_version, capabilities)</code>（main.py:81–93）。'},
+      {t:'note',label:'<b>write() 白名单</b>：只放行 JSON 帧（<code>{</code> 或 Content-Length: 开头），其余丢弃到 stderr',
+       foot:'stdout 保护的核心：<code>stdio_server()</code> 把 <code>sys.stdout.buffer</code> 包成写流，所以代理必须委派 <code>buffer / fileno / readable / encoding</code>（stdout_guard.py:36–53）；<code>write()</code> 只放行 <code>{</code> 或 <code>Content-Length:</code> 开头的内容（:61–62），其余写 stderr 并返回原长度（:64–66）。所以 <span class="hl">stdio 上 stdout 就是协议通道，任何绕过保护的 print 都会在 JSON-RPC 流里插进非法帧</span>。'}
+    ]},
+    {n:'2',title:'阶段 2 initialize 握手',rows:[
+      {t:'msg',from:'client',to:'main',kind:'req',label:'<b>initialize</b> {jsonrpc, id, method, params:{protocolVersion, capabilities, clientInfo}}（tests:57–61）',
+       foot:'报文见 <code>tests/test_mcp_protocol.py:57–61</code>：<code>{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"bugvault-test","version":"0.1.0"}}}</code>。'},
+      {t:'note',label:'传输格式：<b>换行分隔 JSON，一行一个对象</b>，不是规范里的 Content-Length 帧（tests:3–4、:56）',
+       foot:'测试注释说明 MCP stdio 传输用换行分隔 JSON，而非规范里的 <code>Content-Length</code> 帧（tests/test_mcp_protocol.py:3–4、:56）；代理白名单兼容两种写法（stdout_guard.py:61）。'},
+      {t:'msg',from:'main',to:'client',kind:'ret',label:'result：<b>serverInfo{bugvault, 2.0.0} + capabilities</b>（main.py:85–92）',
+       foot:'应答由 SDK 依据 <code>InitializationOptions</code> 生成：<code>server_name="bugvault"</code>、<code>server_version="2.0.0"</code>、<code>capabilities=server.get_capabilities(...)</code>（main.py:85–92、config.py:43–44）。'},
+      {t:'note',label:'客户端确认 <b>notifications/initialized</b> 由 mcp SDK 内部处理，仓库代码无显式分支',
+       foot:'<code>notifications/initialized</code> 由 mcp SDK 内部处理，仓库代码里没有显式分支——本页只画仓库里有据可查的帧（超出仓库证据范围的规范行为不臆测）。'}
+    ]},
+    {n:'3',title:'阶段 3 tools/list 工具发现',rows:[
+      {t:'msg',from:'client',to:'main',kind:'req',label:'<b>tools/list</b>',
+       foot:'<code>tools/list</code> 由 SDK 路由到 <code>@server.list_tools()</code> 装饰的 <code>handle_list_tools()</code>（tools.py:235–236）。'},
+      {t:'msg',from:'main',to:'tools',kind:'req',label:'<b>handle_list_tools()</b> 构造工具列表（tools.py:236）',
+       foot:'<code>handle_list_tools()</code> 返回 <code>list[types.Tool]</code>（tools.py:236–286）。'},
+      {t:'note',label:'固定 4 个基础工具；<b>reflection_svc 不为 None 时才 append 第 5 个</b>（tools.py:237–301）',
+       foot:'4 个基础工具无条件构造（tools.py:237–286）：<code>retrieve_bug_experience</code>、<code>save_bug_experience</code>、<code>save_convention</code>、<code>retrieve_convention</code>。<code>reflect_and_prevent_error</code> 仅当 <code>reflection_svc is not None</code> 才追加（:288–301），而该对象仅当 <code>settings.enable_reflection_tool</code>（默认 True，config.py:67）时构建（main.py:59–62）——所以默认 5 个工具，关掉开关退化为 4 个。'},
+      {t:'note',label:'每个 Tool 带 <b>inputSchema</b>：_RETRIEVE_SCHEMA :41、_SAVE_SCHEMA :89、_CONVENTION_SAVE_SCHEMA :103、_CONVENTION_RETRIEVE_SCHEMA :134、_REFLECT_SCHEMA :165',
+       foot:'每个工具携带 <code>inputSchema</code>：<code>_RETRIEVE_SCHEMA</code>(tools.py:41)、<code>_SAVE_SCHEMA</code>(:89)、<code>_CONVENTION_SAVE_SCHEMA</code>(:103)、<code>_CONVENTION_RETRIEVE_SCHEMA</code>(:134)、<code>_REFLECT_SCHEMA</code>(:165)。'},
+      {t:'msg',from:'tools',to:'client',kind:'ret',label:'result.tools = <b>4 或 5 个 Tool 定义</b>（含 description 决策树）',
+       foot:'工具的 <code>description</code> 内置调用决策树（tools.py:241–251 起），这是「客户端怎么知道先查坑再查规范」的载体，不需要外部文档。'}
+    ]},
+    {n:'4',title:'阶段 4 tools/call 调用与返回（含校验与日志契约）',rows:[
+      {t:'msg',from:'client',to:'main',kind:'req',label:'<b>tools/call</b> {name, arguments}',
+       foot:'<code>tools/call</code> 由 <code>@server.call_tool()</code> 装饰的 <code>handle_call_tool(name, arguments)</code> 接收（tools.py:305–308）。'},
+      {t:'msg',from:'main',to:'tools',kind:'req',label:'<b>handle_call_tool(name, arguments)</b>（tools.py:305）',
+       foot:'分发在 tools.py:326–374：按 <code>name</code> 分支到 retrieve / save / reflect；未知工具名返回 <code>Unknown tool: {name}</code>（:370–374）。'},
+      {t:'msg',from:'tools',to:'obs',kind:'req',label:'<b>set_trace_id()</b> + entry 日志（tools.py:309–322）',
+       foot:'每条调用先 <code>set_trace_id()</code>：<code>uuid4().hex[:12]</code> 写入 contextvar（logger.py:32–40），<code>TraceIdFilter</code> 把它注入该请求所有日志行（logger.py:29、50–57）。entry 日志 <code>AiCallLogEntry(event_type="entry", tool_name=name, metadata={"arguments": {...}})</code> 写入前剔除 <code>eval_llm_api_key</code>（tools.py:317–321）。'},
+      {t:'note',label:'校验第一层：<b>inputSchema</b> 随 tools/list 暴露给客户端，是契约；服务端不按 schema 校验',
+       foot:'<span class="hl">校验第一层（契约层）</span>：<code>inputSchema</code> 是给客户端与模型看的调用契约；仓库内 grep 不到任何 JSON Schema 校验调用（tools.py 只有 5 处 <code>inputSchema=</code> 赋值），服务端不会按 schema 拒绝参数——落差见「参数校验」面板。'},
+      {t:'msg',from:'tools',to:'model',kind:'req',label:'模型构造：<b>BugRecord / ConventionRecord</b>（persistence_svc.py:136）',
+       foot:'保存类工具在 <code>RecordPersistence._prepare</code> 里用 <code>record_factory(**arguments)</code> 构造 Pydantic 模型（persistence_svc.py:136）：<code>prepare_bug</code>→<code>BugRecord</code>（:71–79），<code>prepare_convention</code>→<code>ConventionRecord</code>（:81–89）。'},
+      {t:'msg',from:'model',to:'tools',kind:'ret',label:'合法 → record；非法 → <b>Invalid record 文本</b>（tools.py:471–482）',
+       foot:'硬校验失败 → <code>PreparedRecord(record=None, validation_error=str(exc))</code>（persistence_svc.py:137–142）→ 返回 <code>Invalid record: ...</code> / <code>Invalid convention: ...</code>（tools.py:471–482）。构造成功再过软校验 <code>missing_required_fields()</code>（bug_record.py:108–114、convention_record.py:114–120），缺字段 → draft，文案 <code>saved as draft. Missing fields: ...</code>（tools.py:484–493）。'},
+      {t:'note',label:'校验第二层：<b>Pydantic 硬约束</b>（min/max_length）+ 软校验 draft；检索类不建模',
+       foot:'<span class="hl">校验第二层（强制层）</span>：<code>BugRecord</code> / <code>ConventionRecord</code> 的 <code>min_length</code> / <code>max_length</code> 是硬约束（bug_record.py:31–60、convention_record.py:36–60）。检索类工具不构造模型，只 <code>arguments.get("query", "")</code>（tools.py:527–530、594–595），空值由检索层兜底（retrieval_svc.py:68–71）。'},
+      {t:'note',label:'业务在共享线程池执行：<b>run_in_executor</b>（save tools.py:440，retrieve :630）；save 可 <b>create_task</b> 后台落库（:448–455）',
+       foot:'业务执行在共享线程池：<code>loop.run_in_executor(executor, ...)</code>（save：tools.py:440；retrieve：tools.py:630）。save 在 <code>enable_async_embedding=True</code> 时还会 <code>asyncio.create_task</code> 后台落库（tools.py:448–455），失败只记日志、不影响返回（:460–468）。'},
+      {t:'msg',from:'tools',to:'obs',kind:'req',label:'exit 日志：<b>ok</b> 或 <b>_classify_error(exc)</b>（tools.py:379–403）',
+       foot:'exit 日志：成功写 <code>status="ok", error_code="ok"</code>（tools.py:379–384）；异常走 <code>except</code>，用 <code>_classify_error(exc)</code> 分类（tools.py:396–403、observability.py:217–235），枚举见 models/error_code.py:12–31。落盘路径 <code>{data_root}/log/ai_call.jsonl</code>（observability.py:126–139）。'},
+      {t:'msg',from:'tools',to:'client',kind:'ret',label:'result.content = <b>[TextContent(text=...)]</b>（tools.py:471–510）',
+       foot:'返回给客户端的是 <code>list[TextContent]</code>（tools.py:471–510、551–573）；异常也被包成文本 <code>Error executing {name}: {exc}</code>（:409–412），不抛 JSON-RPC error 对象。<span class="hl">trace_id 只进服务端日志与 JSONL，不随结果返回</span>（tools.py:310,322；observability.py:103），客户端无法凭返回内容关联服务端日志。'}
+    ]}
+  ];
+
+  var GUTTER=44, TOP=64, HB=30, ROW=62, NOTE=53, GAPG=18;
+  var N=ACTORS.length;
+  function frac(i){return (i+0.5)/N;}
+  function XP(f){return 'calc('+GUTTER+'px + (100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+  function WP(f){return 'calc((100% - '+GUTTER+'px) * '+f.toFixed(4)+')';}
+
+  var el=document.getElementById('seqMain'), out='', y=TOP, layout=[], step=0;
+  PHASES.forEach(function(g){
+    var h=HB;
+    g.rows.forEach(function(r){h+=(r.t==='note'?NOTE:ROW);});
+    layout.push({g:g,top:y,h:h});
+    y+=h+GAPG;
+  });
+  var H=y+12;
+
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ph'+(i===0?' actor':'')+'" style="left:'+XP(frac(i))+';width:'+WP(0.94/N)+'"><b>'+a.name+'</b><span>'+a.sub+'</span></div>';
+  });
+  ACTORS.forEach(function(a,i){
+    out+='<div class="ll" style="left:'+XP(frac(i))+';top:52px;height:'+(H-68)+'px"></div>';
+  });
+  layout.forEach(function(L){
+    var g=L.g, gy=L.top;
+    out+='<div class="step grp" style="top:'+(gy+4)+'px"><span class="n">'+g.n+'</span></div>';
+    out+='<div class="gbracket" style="top:'+(gy+4)+'px;height:'+(L.h-8)+'px"></div>';
+    out+='<div class="gband" style="top:'+gy+'px;left:'+GUTTER+'px">'+g.title+'</div>';
+    var ry=gy+HB;
+    g.rows.forEach(function(r){
+      step++;
+      out+='<div class="step" style="top:'+(ry+2)+'px"><span class="n">'+step+'</span></div>';
+      if(r.t==='note'){
+        out+='<div class="noteband" style="top:'+(ry+2)+'px;height:'+(NOTE-6)+'px;left:'+(GUTTER+42)+'px">'+r.label+'</div>';
+        ry+=NOTE;
+      } else {
+        var ai=-1,bi=-1;
+        ACTORS.forEach(function(a,idx){if(a.k===r.from)ai=idx;if(a.k===r.to)bi=idx;});
+        var fa=frac(ai),fb=frac(bi),lo=Math.min(fa,fb),wd=Math.abs(fb-fa);
+        var dir=(fb>=fa)?'fwd':'back';
+        var ret=(r.kind==='ret')?' ret':'';
+        out+='<div class="msg'+ret+' '+dir+'" style="left:'+XP(lo)+';width:'+WP(wd)+';top:'+(ry+4)+'px;height:'+(ROW-8)+'px"><div class="line"></div><div class="lbl">'+r.label+'</div></div>';
+        ry+=ROW;
+      }
+    });
+  });
+  el.style.height=H+'px';
+  el.innerHTML=out;
+
+  var f='<h3>步骤说明（编号与图左侧步号一一对应）</h3>', n=0;
+  PHASES.forEach(function(g){
+    f+='<h4>'+g.title+'</h4><ol>';
+    g.rows.forEach(function(r){
+      n++;
+      f+='<li><span class="fn">'+n+'</span><span>'+r.foot+'</span></li>';
+    });
+    f+='</ol>';
+  });
+  document.getElementById('facts').innerHTML=f;
+})();
+</script>
+</body>
+</html>

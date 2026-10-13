@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>show-me 09：BugVault 保存链路时序图与索引一致性</title>
+<style>
+  :root{
+    --blue:#1677ff; --blue-d:#0b4fc4;
+    --sync:#1677ff; --async:#d48806; --write:#389e0d; --opt:#722ed1;
+    --red:#cf1322; --red-bg:#fff1f0; --red-line:#ffa39e;
+    --green:#389e0d; --green-bg:#f6ffed;
+    --amber:#d48806; --amber-bg:#fffbe6;
+    --purple:#722ed1; --purple-bg:#f9f0ff;
+    --ink:#1f2329; --muted:#6b7280; --line:#e5e7eb;
+    --bg:#f5f7fa; --card:#ffffff; --code-bg:#f2f4f8;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.65;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:.86em}
+  a{color:var(--blue-d)}
+
+  /* top nav */
+  .topbar{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);backdrop-filter:saturate(180%) blur(8px);
+    border-bottom:1px solid var(--line)}
+  .topbar .inner{max-width:1120px;margin:0 auto;padding:10px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .topbar .back{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:600;color:var(--blue-d);
+    border:1px solid #bad0ff;background:#f0f6ff;border-radius:999px;padding:5px 12px;font-size:13px}
+  .topbar .back:hover{background:#e2eeff}
+  .topbar .crumb{font-size:12.5px;color:var(--muted);margin-left:auto;font-family:ui-monospace,Menlo,monospace}
+
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 60px}
+
+  /* hero */
+  .hero{margin:6px 0 18px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);font-weight:700;margin:0 0 8px}
+  h1{font-size:26px;line-height:1.3;margin:0 0 10px}
+  .lede{margin:0 0 14px;color:#3f4753;max-width:64ch}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;color:#4b5563;display:inline-flex;gap:6px;align-items:center}
+  .chip b{font-weight:700;color:#111827}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .dot.on{background:var(--green)} .dot.off{background:#bfbfbf} .dot.warn{background:var(--amber)}
+
+  /* legend */
+  .legend{margin:16px 0 18px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:12px;
+    display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12.5px;color:#4b5563}
+  .legend .item{display:inline-flex;align-items:center;gap:7px}
+  .swatch{width:26px;height:0;border-top:3px solid #000;display:inline-block}
+  .swatch.sync{border-top:3px solid var(--sync)}
+  .swatch.async{border-top:3px dashed var(--async)}
+  .swatch.write{border-top:3px solid var(--write)}
+  .swatch.opt{border-top:3px dotted var(--opt)}
+  .swatch.red{border-top:3px solid var(--red)}
+
+  /* cards */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin:0 0 20px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .card > header{margin:0 0 14px}
+  .card h2{font-size:19px;margin:0 0 5px;line-height:1.35}
+  .card h2 .n{color:var(--blue);font-family:ui-monospace,Menlo,monospace;font-size:15px;margin-right:6px}
+  .card .sub{margin:0;color:var(--muted);font-size:13px}
+  h3{font-size:14px;margin:0 0 8px;color:#111827}
+  .tag{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;margin-left:8px;vertical-align:middle}
+  .tag.ok{background:var(--green-bg);color:#237804;border:1px solid #b7eb8f}
+  .tag.part{background:var(--amber-bg);color:#ad6800;border:1px solid #ffe58f}
+  .tag.plan{background:#f0f0f0;color:#595959;border:1px solid #d9d9d9}
+  .tag.gap{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+
+  /* sequence */
+  .seqscroll{overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}
+  .seq{min-width:824px}
+  .lanes{display:flex;align-items:stretch;margin:0 0 6px}
+  .lane-num{flex:0 0 42px}
+  .lane-track{flex:1 1 auto;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:0}
+  .lane{padding:6px 6px 8px;text-align:center;border-top:3px solid var(--blue);background:#f7faff;border-radius:8px 8px 0 0;margin-right:4px;min-width:0}
+  .lane:last-child{margin-right:0}
+  .lane .nm{display:block;font-size:11.5px;font-weight:700;color:#0b3a91;line-height:1.25;overflow-wrap:anywhere}
+  .lane .df{display:block;font-size:9.5px;line-height:1.3;color:var(--muted);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
+  .lane.l-handler{border-top-color:var(--blue)}
+  .lane.l-persis{border-top-color:#13a8a8}
+  .lane.l-archive{border-top-color:var(--write)}
+  .lane.l-bg{border-top-color:var(--async)}
+  .lane.l-emb{border-top-color:#eb2f96}
+  .lane.l-lance{border-top-color:#2f54eb}
+  .lane.l-graph{border-top-color:var(--opt)}
+
+  .step{display:flex;align-items:center;border-top:1px solid #f0f2f5}
+  .step:first-of-type{border-top:none}
+  .num{flex:0 0 42px;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;color:#344054;text-align:center}
+  .track{flex:1 1 auto;position:relative;height:62px;
+    background-image:repeating-linear-gradient(90deg,rgba(22,119,255,.045) 0 12.5%,rgba(0,0,0,0) 12.5% 25%)}
+  .track .lbl{position:absolute;top:3px;transform:translate(-50%,0);white-space:nowrap;
+    background:#fff;border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-size:11px;line-height:1.35;font-weight:600;
+    color:#1f2937;max-width:100%;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 1px rgba(0,0,0,.03)}
+  .track .lbl.start{transform:translate(0,0)}
+  .track .lbl .m{font-family:ui-monospace,Menlo,monospace;font-weight:600}
+  .track .lbl small{display:block;font-weight:500;color:var(--muted);font-size:9.5px;line-height:1.3}
+  .line{position:absolute;top:84%;height:0;border-top:2px solid var(--sync)}
+  .line::after{content:"";position:absolute;top:-4.5px;width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent}
+  .line.ltr::after{right:-1px;border-left:8px solid var(--sync)}
+  .line.rtl::after{left:-1px;border-right:8px solid var(--sync)}
+  .line.dashed{border-top-style:dashed;border-top-color:var(--async)}
+  .line.dashed.ltr::after{border-left-color:var(--async)}
+  .line.dashed.rtl::after{border-right-color:var(--async)}
+  .line.write{border-top-color:var(--write)} .line.write.ltr::after{border-left-color:var(--write)} .line.write.rtl::after{border-right-color:var(--write)}
+  .line.opt{border-top-style:dotted;border-top-color:var(--opt)} .line.opt.ltr::after{border-left-color:var(--opt)} .line.opt.rtl::after{border-right-color:var(--opt)}
+  .selfcall{position:absolute;top:3px;transform:translate(-50%,0);border:1.5px dashed #13a8a8;background:#e6fffb;
+    border-radius:8px;padding:2px 8px;font-size:11px;line-height:1.35;font-weight:600;color:#006d75;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .rtn{position:absolute;top:84%;height:0;border-top:2px dashed var(--red)}
+  .rtn::after{content:"";position:absolute;top:-4.5px;width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-right:0}
+  .rtn.ltr::after{right:-1px;border-left:8px solid var(--red)}
+  .rtn.rtl::after{left:-1px;border-right:8px solid var(--red)}
+  .scrollhint{font-size:11.5px;color:var(--muted);margin:8px 0 0}
+  .scrollhint .k{display:none}
+  @media (max-width:760px){ .scrollhint .k{display:inline} }
+
+  .foursteps{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 12px}
+  .foursteps span{font-size:12px;border:1px solid var(--line);background:#f7f9fc;border-radius:8px;padding:3px 9px;color:#3f4753}
+  .foursteps b{color:#0b3a91}
+
+  /* footnotes */
+  .footnotes{margin:16px 0 0;padding:16px 0 0;border-top:1px dashed var(--line);list-style:none;counter-reset:fn}
+  .footnotes > li{counter-increment:fn;position:relative;padding:9px 0 9px 40px;border-bottom:1px solid #f2f4f7;font-size:13.5px;color:#333}
+  .footnotes > li:last-child{border-bottom:none}
+  .footnotes > li::before{content:counter(fn);position:absolute;left:0;top:10px;width:26px;height:26px;border-radius:50%;
+    background:#eef4ff;color:var(--blue-d);font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:12px;
+    display:flex;align-items:center;justify-content:center}
+  .ev{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#334155;background:var(--code-bg);border-radius:5px;padding:1px 5px;white-space:nowrap}
+  .fn-note{display:block;margin-top:5px;color:#5b6472;font-size:12.5px}
+
+  .callout{border-left:4px solid var(--blue);background:#f0f6ff;border-radius:0 10px 10px 0;padding:11px 14px;margin:14px 0 0;font-size:13.5px}
+  .callout.red{border-left-color:var(--red);background:var(--red-bg);color:#5c0011}
+  .callout strong{color:inherit}
+
+  /* comparison */
+  .cmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .cmp .col{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+  .cmp .col > .hd{padding:11px 14px;font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cmp .col.auth > .hd{background:var(--green-bg);border-bottom:1px solid #b7eb8f;color:#135200}
+  .cmp .col.proj > .hd{background:#eef4ff;border-bottom:1px solid #bad0ff;color:#0b3a91}
+  .cmp .col.graph > .hd{background:var(--purple-bg);border-bottom:1px solid #d3adf7;color:#391085}
+  .cmp .col > .bd{padding:12px 14px}
+  .kv{display:grid;grid-template-columns:88px 1fr;gap:4px 10px;font-size:12.5px;margin:0}
+  .kv dt{color:var(--muted);font-weight:600}
+  .kv dd{margin:0;color:#2b3440;overflow-wrap:anywhere}
+  .col.full{grid-column:1 / -1}
+  .yes{color:var(--green);font-weight:700}
+  .no{color:var(--red);font-weight:700}
+
+  .tablewrap{overflow-x:auto;margin-top:14px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:13px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f7f9fc;font-weight:700;color:#111827}
+  td code{white-space:nowrap}
+
+  .redbox{border:1.5px solid var(--red-line);background:var(--red-bg);border-radius:14px;padding:16px 18px;margin:0 0 20px}
+  .redbox h2{color:var(--red)}
+  .redbox ol{margin:0;padding-left:20px}
+  .redbox li{margin:0 0 10px}
+  .redbox li:last-child{margin-bottom:0}
+  .gap-tag{display:inline-block;font-size:11px;font-weight:700;color:#fff;background:var(--red);border-radius:5px;padding:1px 7px;margin-right:6px}
+  .fix{color:#5c0011}
+
+  footer.evidence{border-top:1px solid var(--line);margin-top:6px;padding-top:16px;color:var(--muted);font-size:12.5px}
+  footer.evidence code{color:#334155}
+  .evgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:4px 16px;margin-top:8px}
+
+  @media (max-width:720px){
+    h1{font-size:21px}
+    .cmp{grid-template-columns:1fr}
+    .kv{grid-template-columns:80px 1fr}
+    .wrap{padding:16px 12px 44px}
+    .card{padding:14px}
+  }
+  @media print{
+    .topbar{position:static}
+    body{background:#fff;font-size:11.5px}
+    .card,.redbox{break-inside:avoid;box-shadow:none}
+    .seqscroll{overflow:visible}
+    .seq{min-width:0}
+    .card h2{font-size:15px}
+    @page{margin:12mm}
+  }
+</style>
+</head>
+<body>
+
+<nav class="topbar">
+  <div class="inner">
+    <a class="back" href="show-me-index.html" title="docs/show-me-index.html">&#8592; show-me 索引</a>
+    <span class="crumb">BugVault / 链路 09 / code@274e597</span>
+  </div>
+</nav>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow">BugVault，记忆写入与索引一致性</p>
+    <h1>保存链路时序图：权威数据 vs 索引投影</h1>
+    <p class="lede">
+      <code>save_bug_experience</code> 与 <code>save_convention</code> 从 Pydantic 校验到 Markdown 归档、
+      后台向量化、可选图投影的一次完整写入。所有标签、字段、类名、接口路径均来自代码，标注到行号。
+    </p>
+    <div class="chips">
+      <span class="chip"><span class="dot on"></span>Markdown 归档：同步写</span>
+      <span class="chip"><span class="dot on"></span>后台向量化：默认开启</span>
+      <span class="chip"><span class="dot warn"></span>图投影：只写未查</span>
+      <span class="chip"><span class="dot off"></span>任务队列与完成回执：无</span>
+      <span class="chip"><b>证据基准</b> 只读代码，未运行 pytest</span>
+    </div>
+  </section>
+
+  <div class="legend">
+    <span class="item"><span class="swatch sync"></span>同步调用</span>
+    <span class="item"><span class="swatch async"></span>异步调度（进程内 create_task）</span>
+    <span class="item"><span class="swatch write"></span>落盘写入</span>
+    <span class="item"><span class="swatch opt"></span>可选投影（gdb 就绪才写）</span>
+    <span class="item"><span class="swatch red"></span>红色：边界与落差</span>
+  </div>
+
+  <!-- ============ ARTIFACT 1 ============ -->
+  <section class="card" id="seq">
+    <header>
+      <h2><span class="n">图 1</span>保存链路时序图 <span class="tag ok">代码现状</span></h2>
+      <p class="sub">左侧步号对应图下脚注；说明文字不进入流程图。窄屏可横向滑动。</p>
+    </header>
+
+    <div class="foursteps">
+      <span><b>第 1 步 Pydantic 校验</b>：步 3-4</span>
+      <span><b>第 2 步 Markdown 归档（同步）</b>：步 5</span>
+      <span><b>第 3 步 后台向量化（异步）</b>：步 7-11</span>
+      <span><b>第 4 步 图投影（可选）</b>：步 12</span>
+    </div>
+
+    <div class="seqscroll">
+      <div class="seq">
+        <div class="lanes">
+          <div class="lane-num"></div>
+          <div class="lane-track">
+            <div class="lane"><span class="nm">MCP Client</span><span class="df">Claude Code / Cursor</span></div>
+            <div class="lane l-handler"><span class="nm">handler</span><span class="df">_handle_save_record</span></div>
+            <div class="lane l-persis"><span class="nm">RecordPersistence</span><span class="df">persistence_svc</span></div>
+            <div class="lane l-archive"><span class="nm">Archive</span><span class="df">archive_svc (.md)</span></div>
+            <div class="lane l-bg"><span class="nm">background task</span><span class="df">create_task</span></div>
+            <div class="lane l-emb"><span class="nm">EmbeddingService</span><span class="df">fastembed / ONNX</span></div>
+            <div class="lane l-lance"><span class="nm">LanceDBClient</span><span class="df">bug_records + chunks</span></div>
+            <div class="lane l-graph"><span class="nm">GraphDB</span><span class="df">LadybugDB 叠加层</span></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">1</div>
+          <div class="track">
+            <div class="line ltr" style="left:6.25%;width:12.5%"></div>
+            <div class="lbl start" style="left:6.25%"><span class="m">call_tool("save_bug_experience" | "save_convention")</span></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">2</div>
+          <div class="track">
+            <div class="line ltr" style="left:18.75%;width:12.5%"></div>
+            <div class="lbl" style="left:25%"><span class="m">run_in_executor(executor, prepare, arguments)</span><small>同步等待校验结果</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">3</div>
+          <div class="track">
+            <div class="selfcall" style="left:31.25%">Pydantic 校验 BugRecord / ConventionRecord</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">4</div>
+          <div class="track">
+            <div class="selfcall" style="left:31.25%">missing_required_fields() &#8594; draft 分支</div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">5</div>
+          <div class="track">
+            <div class="line write ltr" style="left:31.25%;width:12.5%"></div>
+            <div class="lbl" style="left:37.5%"><span class="m">write_markdown_archive / write_convention_archive</span><small>同步写盘</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">6</div>
+          <div class="track">
+            <div class="rtn rtl" style="left:6.25%;width:12.5%"></div>
+            <div class="lbl" style="left:12.5%"><span class="m">return "saved successfully"</span><small>先返回成功 &#8800; 已可检索</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">7</div>
+          <div class="track">
+            <div class="line dashed ltr" style="left:18.75%;width:37.5%"></div>
+            <div class="lbl" style="left:37.5%"><span class="m">asyncio.create_task(_persist_record_in_background)</span><small>无队列，无回执</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">8</div>
+          <div class="track">
+            <div class="line dashed rtl" style="left:31.25%;width:25%"></div>
+            <div class="lbl" style="left:43.75%"><span class="m">run_in_executor(executor, persistence.persist, record)</span></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">9</div>
+          <div class="track">
+            <div class="line write ltr" style="left:31.25%;width:37.5%"></div>
+            <div class="lbl" style="left:50%"><span class="m">generate_embeddings([parent, &#42;chunks])</span><small>一批向量</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">10</div>
+          <div class="track">
+            <div class="line write ltr" style="left:31.25%;width:50%"></div>
+            <div class="lbl" style="left:56.25%"><span class="m">upsert_record</span><small>父表，merge_insert("record_id")</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">11</div>
+          <div class="track">
+            <div class="line write ltr" style="left:31.25%;width:50%"></div>
+            <div class="lbl" style="left:56.25%"><span class="m">upsert_chunks</span><small>子表，merge_insert("chunk_id")</small></div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="num">12</div>
+          <div class="track">
+            <div class="line opt ltr" style="left:31.25%;width:62.5%"></div>
+            <div class="lbl" style="left:62.5%"><span class="m">_project_graph</span><small>可选，只写未查</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="scrollhint">提示：<span class="k">窄屏下左右滑动查看完整 8 条泳道，</span>每个步号在图下脚注中有对应代码定位。</p>
+
+    <ol class="footnotes">
+      <li>
+        <span class="m">MCP Client &#8594; handler</span>：客户端按 <code>_SAVE_SCHEMA</code> / <code>_CONVENTION_SAVE_SCHEMA</code> 调用 <code>save_bug_experience</code> 或 <code>save_convention</code>；<code>handle_call_tool</code> 先 <code>set_trace_id()</code> 再按名字分发。
+        <span class="fn-note"><span class="ev">src/bugvault/mcp_tools/tools.py:255</span> <span class="ev">:267</span> <span class="ev">:306</span> <span class="ev">:332</span> <span class="ev">:342</span>；schema required：<span class="ev">:100</span> <span class="ev">:131</span></span>
+      </li>
+      <li>
+        <span class="m">handler &#8594; RecordPersistence</span>：校验与归档被包在 <code>prepare()</code> 里，通过共享线程池执行，避免阻塞 stdio 事件循环。池大小 <code>thread_pool_workers=2</code>。
+        <span class="fn-note"><span class="ev">tools.py:440</span>；<span class="ev">config.py:40</span>；池创建 <span class="ev">main.py:41</span></span>
+      </li>
+      <li>
+        <span class="m">Pydantic 校验（第 1 步保存四步之一）</span>：<code>_prepare()</code> 用 <code>record_factory(**arguments)</code> 构造模型；4 个必填字段由 <code>Field(min_length=1)</code> 约束。构造抛错则记 <code>validation_error</code>，返回 <code>"Invalid record: ..."</code>，不归档、不索引。
+        <span class="fn-note"><span class="ev">persistence_svc.py:127</span>（工厂 <span class="ev">:136</span>）；<span class="ev">bug_record.py:31</span>（必填字段）；兜底文案 <span class="ev">tools.py:473</span></span>
+      </li>
+      <li>
+        <span class="m">draft 分支（缺必填字段）</span>：模型构造成功后调用 <code>missing_required_fields()</code>（检查 <code>tried_methods</code> / <code>final_solution</code> 的 <code>strip()</code>）。缺字段则返回 <code>PreparedRecord(missing_fields=...)</code>，<code>is_draft=True</code>，<span class="yes">不归档、不可检索</span>；handler 回 <code>"... saved as draft. Missing fields: ..."</code>。注意：空串会被 Pydantic 先拦成 Invalid，只有纯空白串才会走到 draft。
+        <span class="fn-note"><span class="ev">persistence_svc.py:144</span> <span class="ev">:37</span>；<span class="ev">bug_record.py:108</span>；<span class="ev">ingestion_svc.py:13</span>；文案 <span class="ev">tools.py:484</span>；probe 追问提示与「3 轮 &#215; 3 问」上限的接线状态见下方红色边界第 3 条</span>
+      </li>
+      <li>
+        <span class="m">Markdown 归档（第 2 步，同步）</span>：校验通过后立即写 Markdown，再返回 <code>PreparedRecord</code>，所以归档相对调用方是同步的。Bug 写到 <code>archive/</code>，Convention 写到 <code>archive/conventions/</code>；文件名 <code>{ts}_{safe_title}.md</code>，<code>ts</code> 取当前时间。
+        <span class="fn-note"><span class="ev">persistence_svc.py:152</span>；<span class="ev">archive_svc.py:126</span> <span class="ev">:139</span> <span class="ev">:214</span> <span class="ev">:220</span>；目录 <span class="ev">config.py:21</span> <span class="ev">:75</span></span>
+      </li>
+      <li>
+        <span class="m">handler &#8594; Client：先返回成功</span>：<code>create_task</code> 之后立刻 <code>return _present_save_outcome(prepared)</code>。此时向量可能尚未写入，向量库仍是最终一致。文案是「I can now retrieve it」，
+        <span class="red">但此刻并不保证可检索</span>。
+        <span class="fn-note"><span class="ev">tools.py:457</span> <span class="ev">:495</span> <span class="ev">:504</span>；与 <span class="ev">CONTEXT.md</span>「Index projection &#8230; eventually consistent」一致</span>
+      </li>
+      <li>
+        <span class="m">handler &#8594; background（第 3 步，异步）</span>：仅当 <code>record 非 None 且非 draft 且 enable_async_embedding 且 embedding_svc 非 None</code> 时调度。任务由 <code>asyncio.create_task</code> 直接挂在事件循环上，没有任务队列。
+        <span class="fn-note"><span class="ev">tools.py:442</span> <span class="ev">:448</span>；开关默认值 <span class="ev">config.py:47</span>；embedding 初始化 <span class="ev">main.py:52</span></span>
+      </li>
+      <li>
+        <span class="m">background &#8594; RecordPersistence</span>：后台协程把同步的 <code>persistence.persist</code> 提交到同一个线程池；<code>persist()</code> 会再次拒绝 draft（<code>raise ValueError("Cannot persist a draft record")</code>）。<code>_persist_record_in_background</code> 捕获所有异常，只写日志，不向调用方回报。
+        <span class="fn-note"><span class="ev">tools.py:460</span> <span class="ev">:463</span> <span class="ev">:464</span>；<span class="ev">persistence_svc.py:113</span></span>
+      </li>
+      <li>
+        <span class="m">RecordPersistence &#8594; EmbeddingService</span>：父行 <code>search_text</code> 与所有 chunk 的 <code>search_text</code> 拼成一个批次一次性编码，向量数不符会抛 <code>RuntimeError</code>。默认模型 <code>bge-small-zh-v1.5</code>，维度 512。
+        <span class="fn-note"><span class="ev">persistence_svc.py:91</span> <span class="ev">:97</span> <span class="ev">:99</span>；<span class="ev">config.py:25</span></span>
+      </li>
+      <li>
+        <span class="m">RecordPersistence &#8594; LanceDB 父表</span>：<code>upsert_record</code> 用 <code>merge_insert("record_id")</code> + <code>when_matched_update_all / when_not_matched_insert_all</code>，所以重复保存是 upsert。父表为 <code>bug_records</code>。
+        <span class="fn-note"><span class="ev">persistence_svc.py:118</span>；<span class="ev">lancedb_client.py:61</span> <span class="ev">:194</span>（merge 键 <span class="ev">:207</span>）</span>
+      </li>
+      <li>
+        <span class="m">RecordPersistence &#8594; LanceDB 子表</span>：<code>upsert_chunks</code> 用 <code>merge_insert("chunk_id")</code>，批量写 <code>bugvault_chunks</code>；Bug 与 Convention 共用父子两表，靠 <code>record_type</code> 判别（见「图 2 数据模型速查」）。
+        <span class="fn-note"><span class="ev">persistence_svc.py:119</span>；<span class="ev">lancedb_client.py:62</span> <span class="ev">:220</span>（merge 键 <span class="ev">:236</span>）</span>
+      </li>
+      <li>
+        <span class="m">RecordPersistence &#8594; GraphDB（第 4 步，可选）</span>：<code>_project_graph</code> 按记录类型调 <code>write_bug_graph_edges</code> 或 <code>write_convention_graph_edges</code>，写节点与边；若 <code>gdb is None</code> 或未就绪则直接返回。图只写不查，检索链路不消费它。
+        <span class="fn-note"><span class="ev">persistence_svc.py:120</span> <span class="ev">:158</span> <span class="ev">:164</span>；<span class="ev">graph_db.py:371</span> <span class="ev">:404</span>（保护 <span class="ev">:377</span> <span class="ev">:406</span>）</span>
+      </li>
+    </ol>
+
+    <div class="callout red">
+      <strong>红色边界：</strong>第 7 到 12 步都在 <code>asyncio.create_task</code> 里。它没有任务队列、没有完成回执（失败只 <code>logger.exception</code>）。
+      进程在 archive 写盘后、向量写库前中断，就会出现 <strong>「archive 已写，向量未入库」</strong>：文件在，但 <code>retrieve_*</code> 检索不到。
+      改进方向：外置任务队列 + 完成回执 + 启动时对 archive 与索引做对账。
+    </div>
+  </section>
+
+  <!-- ============ ARTIFACT 2 ============ -->
+  <section class="card" id="authority">
+    <header>
+      <h2><span class="n">图 2</span>权威数据 vs 索引投影 对照卡 <span class="tag ok">代码现状</span></h2>
+      <p class="sub">Markdown archive 是可读权威副本，LanceDB 是索引投影，二者最终一致；Graph 是可选的只写叠加层。</p>
+    </header>
+
+    <div class="cmp">
+      <div class="col auth">
+        <div class="hd"><span class="dot on"></span>权威副本：Markdown Archive <span class="tag ok">已实现</span></div>
+        <div class="bd">
+          <dl class="kv">
+            <dt>定位</dt><dd>完整、人类可读的持久副本；域模型 «Archive»</dd>
+            <dt>位置</dt><dd><code>settings.markdown_archive_dir</code>，默认 <code>~/.bugvault/archive/</code>；Convention 在 <code>conventions/</code> 子目录</dd>
+            <dt>写入</dt><dd><code>write_markdown_archive</code> / <code>write_convention_archive</code>，同步写盘</dd>
+            <dt>内容</dt><dd>YAML frontmatter + 全文（报错 / 尝试 / 方案 / 根因）</dd>
+            <dt>是否可检索</dt><dd><span class="no">否</span>，检索只走 LanceDB</dd>
+            <dt>重复保存</dt><dd><span class="no">不幂等</span>：文件名带当前时间戳，每次保存新增一个 <code>.md</code></dd>
+            <dt>写入失败</dt><dd>异常被吞，记为 non-fatal，记录仍继续索引</dd>
+          </dl>
+          <div class="fn-note" style="margin-top:8px"><span class="ev">config.py:21</span> <span class="ev">:75</span>；<span class="ev">archive_svc.py:126</span> <span class="ev">:139</span> <span class="ev">:151</span> <span class="ev">:214</span>；<span class="ev">CONTEXT.md</span> «Archive» / «Record establishment»</div>
+        </div>
+      </div>
+
+      <div class="col proj">
+        <div class="hd"><span class="dot on"></span>索引投影：LanceDB <span class="tag part">最终一致</span></div>
+        <div class="bd">
+          <dl class="kv">
+            <dt>定位</dt><dd>从完整记录派生的查询表示；域模型 «Index projection»</dd>
+            <dt>位置</dt><dd>父表 <code>bug_records</code> + 子表 <code>bugvault_chunks</code>，<code>settings.db_uri</code></dd>
+            <dt>写入</dt><dd><code>upsert_record</code> / <code>upsert_chunks</code>，在后台线程池里执行</dd>
+            <dt>内容</dt><dd>父行：完整字段 + <code>search_text</code> + <code>vector</code>；子行：聚焦块 + <code>vector</code></dd>
+            <dt>是否可检索</dt><dd><span class="yes">是</span>，<code>retrieve_*</code> 命中子块再回捞父行</dd>
+            <dt>重复保存</dt><dd><span class="yes">幂等 upsert</span>：父 <code>merge_insert("record_id")</code>，子 <code>merge_insert("chunk_id")</code></dd>
+            <dt>写入失败</dt><dd>后台异常只记日志，调用方已收到成功；可能留下悬空 archive</dd>
+          </dl>
+          <div class="fn-note" style="margin-top:8px"><span class="ev">lancedb_client.py:61</span> <span class="ev">:62</span> <span class="ev">:194</span> <span class="ev">:207</span> <span class="ev">:220</span> <span class="ev">:236</span>；<span class="ev">persistence_svc.py:109</span></div>
+        </div>
+      </div>
+
+      <div class="col graph full">
+        <div class="hd"><span class="dot warn"></span>可选叠加层：GraphDB（LadybugDB） <span class="tag plan">只写未查</span></div>
+        <div class="bd">
+          <dl class="kv">
+            <dt>写入</dt><dd>保存成功后由 <code>_project_graph</code> 写节点与边：<code>write_bug_graph_edges</code>（Bug 节点、TechStack、Project）与 <code>write_convention_graph_edges</code>（Convention 节点、tags、scope）</dd>
+            <dt>查询</dt><dd><span class="no">当前无消费点</span>：<code>find_related_bugs</code> / <code>find_bugs_by_tech_stack</code> / <code>find_conventions_for_bug</code> / <code>find_bugs_with_same_root_cause</code> 在整个 <code>src/</code> 内除定义处外无调用；检索链路不查图</dd>
+            <dt>计划</dt><dd>ADR-002 Phase 3「检索增强」才计划把图展开接入 <code>retrieve_bug_experience</code></dd>
+          </dl>
+          <div class="fn-note" style="margin-top:8px"><span class="ev">graph_db.py:371</span> <span class="ev">:404</span> <span class="ev">:269</span> <span class="ev">:310</span> <span class="ev">:328</span> <span class="ev">:346</span>；<span class="ev">codex-docs/refer/设计/adr-002-graph-database-overlay.md:165</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>维度</th><th>Markdown Archive（权威副本）</th><th>LanceDB（索引投影）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>角色</td><td>完整记录，可读权威</td><td>派生表示，供检索</td></tr>
+          <tr><td>被 <code>retrieve_*</code> 命中</td><td><span class="no">否</span></td><td><span class="yes">是</span></td></tr>
+          <tr><td>重复保存</td><td>新增文件（不幂等）</td><td>upsert，更新同一行（幂等）</td></tr>
+          <tr><td>保存失败时</td><td>non-fatal，索引照旧</td><td>保留旧行；本次修改未生效</td></tr>
+          <tr><td>进程中断后果</td><td>文件通常已落盘</td><td>可能未写，形成「archive 有，索引无」</td></tr>
+          <tr><td>一致性</td><td colspan="2">最终一致：先返回成功不等于已可检索，需等后台任务完成</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <strong>先返回成功 &#8800; 已可检索：</strong>回调顺序是 <code>prepare()</code>（含同步归档）&#8594; <code>create_task(...)</code> &#8594; <code>return</code>。
+      返回成功只代表「校验通过且已归档」，向量写入是随后在后台完成的投影。
+      <span class="fn-note"><span class="ev">tools.py:448</span> <span class="ev">:457</span></span>
+    </div>
+  </section>
+
+  <!-- supporting: data model -->
+  <section class="card" id="model">
+    <header>
+      <h2><span class="n">速查</span>数据模型：父子两表、分块策略、幂等键与迁移</h2>
+      <p class="sub">Bug 与 Convention 共用两表，靠 <code>record_type</code> 判别。</p>
+    </header>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>表</th><th>键</th><th>字段（来自代码 schema）</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>bug_records</code>（父）</td>
+            <td><code>record_id</code></td>
+            <td>vector, record_id, bug_title, error_log_snippet, tried_methods, final_solution, project_name, tech_stack, root_cause, create_time, search_text, record_type</td>
+          </tr>
+          <tr>
+            <td><code>bugvault_chunks</code>（子）</td>
+            <td><code>chunk_id</code></td>
+            <td>vector, chunk_id, parent_id, chunk_type, search_text, tech_stack, project_name, record_type</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="fn-note" style="margin-top:8px">父表 schema <span class="ev">lancedb_client.py:386</span>；子表 schema <span class="ev">:417</span>；Convention 字段映射 <span class="ev">convention_record.py:132</span>（convention_name&#8594;bug_title，trigger_context&#8594;error_log_snippet，incorrect_behavior&#8594;tried_methods，correct_behavior&#8594;final_solution，scope&#8594;project_name，tags&#8594;tech_stack）</div>
+    </div>
+
+    <h3 style="margin-top:16px">分块策略（<code>CHUNK_MAX_SIZE = 800</code>）</h3>
+    <div class="cmp">
+      <div class="col">
+        <div class="hd" style="background:#f7faff;border-bottom:1px solid #bad0ff;color:#0b3a91">Bug：error_log 与语义块隔离</div>
+        <div class="bd fn-note" style="font-size:12.5px">
+          A 块 <code>error_log</code>：<code>bug_title + error_log_snippet</code>，恒定 1 块，避免堆栈把语义稀释。<br>
+          B 块 <code>semantic</code>：<code>tried_methods + final_solution (+ root_cause)</code>，超长递归切分。<br>
+          <span class="ev">bug_record.py:145</span> <span class="ev">:143</span> <span class="ev">:175</span> <span class="ev">:178</span> <span class="ev">:183</span> <span class="ev">:188</span>
+        </div>
+      </div>
+      <div class="col">
+        <div class="hd" style="background:#f7faff;border-bottom:1px solid #bad0ff;color:#0b3a91">Convention：context 与 correct_behavior</div>
+        <div class="bd fn-note" style="font-size:12.5px">
+          A 块 <code>context</code>：<code>convention_name + trigger_context</code>（对应「何时适用」）。<br>
+          B 块 <code>correct_behavior</code>：<code>convention_name + incorrect_behavior + correct_behavior</code>，超长递归切分。<br>
+          <span class="ev">convention_record.py:180</span> <span class="ev">:178</span> <span class="ev">:212</span> <span class="ev">:215</span> <span class="ev">:222</span>
+        </div>
+      </div>
+    </div>
+    <p class="fn-note" style="margin-top:10px">
+      递归切分 <code>_split_at_boundary</code>：先找段落边界 <code>\n\n</code>，再退到行边界 <code>\n</code>，最后才按字符硬切；切分点需大于 <code>max_size&#215;0.3</code> 才算有效。
+      Bug 与 Convention 各自定义了一份同名函数。<span class="ev">bug_record.py:193</span> <span class="ev">convention_record.py:227</span><br>
+      每个 chunk 都带 <code>bug_title</code> / <code>convention_name</code> 作为前导，<code>chunk_id = MD5(record_id + chunk_type + idx)</code>。<span class="ev">bug_record.py:161</span> <span class="ev">:163</span>
+    </p>
+
+    <h3 style="margin-top:16px">幂等键与 schema 迁移</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>项</th><th>实现</th><th>效果</th></tr></thead>
+        <tbody>
+          <tr><td>父表幂等</td><td><code>merge_insert("record_id")</code> <span class="ev">lancedb_client.py:207</span></td><td>重复保存 upsert，不新增父行</td></tr>
+          <tr><td>子表幂等</td><td><code>merge_insert("chunk_id")</code> <span class="ev">lancedb_client.py:236</span></td><td>重复保存 upsert，不新增 chunk 行</td></tr>
+          <tr><td>身份键</td><td>Bug：<code>MD5(bug_title + error_log_snippet)</code> <span class="ev">bug_record.py:92</span>；Convention：<code>MD5(convention_name + trigger_context)</code> <span class="ev">convention_record.py:104</span></td><td>语义相似的记录不会被合并，只有键相同才 upsert</td></tr>
+          <tr><td>v1.1.1 旧表迁移</td><td><code>_migrate_v2_schema_if_needed</code>，<code>add_columns({"record_type": "'bug'"})</code> <span class="ev">lancedb_client.py:350</span> <span class="ev">:368</span></td><td>幂等补齐：已存在则跳过；旧行默认 <code>'bug'</code>；父表 <span class="ev">:383</span> 与子表 <span class="ev">:414</span> 都会执行</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- red boundary -->
+  <section class="redbox" id="gaps">
+    <h2>红色边界与落差（以代码为准）</h2>
+    <ol>
+      <li>
+        <span class="gap-tag">边界</span><strong>后台任务无队列、无回执。</strong>
+        <code>asyncio.create_task(_persist_record_in_background)</code> 是进程内任务；失败只 <code>logger.exception</code>。进程中断可能形成「archive 已写，向量未入库」，该记录检索不到。
+        <span class="fn-note"><span class="ev">tools.py:448</span> <span class="ev">:460</span> <span class="ev">:464</span> <span class="ev">:466</span>；事实卡 <span class="ev">resume/active/bugvault-project-fact-card.md</span> §7 第 1 条</span>
+      </li>
+      <li>
+        <span class="gap-tag">落差</span><strong>archive 失败仍继续索引，与域模型不一致。</strong>
+        代码把归档异常记为 non-fatal（<code>logger.exception("Failed to archive ...")</code>）后照常返回非 draft 记录，后台仍会写向量；但 <code>CONTEXT.md</code> 的 «Record establishment» 说「校验通过且 Archive 成功后才成为正式记忆」。<span class="fix">以代码为准</span>：当前 archive 失败不阻断索引。
+        <span class="fn-note"><span class="ev">persistence_svc.py:152</span> <span class="ev">:154</span> <span class="ev">:156</span>；<span class="ev">CONTEXT.md</span> «Record establishment»</span>
+      </li>
+      <li>
+        <span class="gap-tag">落差</span><strong>draft 追问与 3 轮上限「定义未接线」。</strong>
+        draft 只返回缺字段清单（<code>tools.py:488</code>），<span class="red">不含追问提示</span>。追问文案 <code>suggest_probe_questions</code> 与 <code>suggest_convention_probe_questions</code> 在整个 <code>src/</code> 内除定义处外无调用；其中「每轮最多 3 问」由切片 <code>suggestions[:3]</code> 实现。
+        「最多 3 轮」由 <code>MAX_PROBE_ROUNDS = 3</code> 与 <code>probe_round_exhausted</code> / <code>increment_probe</code> 表达，但同样无调用；<code>_probe_rounds</code> 是 Pydantic 私有属性，随实例创建重置且不落库，ConventionRecord 无轮次概念。
+        <span class="fn-note"><span class="ev">ingestion_svc.py:21</span> <span class="ev">:50</span> <span class="ev">:67</span> <span class="ev">:92</span>；<span class="ev">bug_record.py:77</span> <span class="ev">:102</span> <span class="ev">:105</span>；<span class="ev">tools.py:484</span> — 运行期是否另有接线：<span class="tag part" style="margin:0">待核验</span></span>
+      </li>
+      <li>
+        <span class="gap-tag">边界</span><strong>关闭异步开关时没有同步兜底。</strong>
+        <code>enable_async_embedding=false</code> 时 <code>_handle_save_record</code> 不调度后台任务，也不会同步写 LanceDB，结果是「只归档、不索引」。默认值为 <code>True</code>。
+        <span class="fn-note"><span class="ev">tools.py:442</span> <span class="ev">:445</span>；<span class="ev">config.py:47</span>；运行期实际环境取值：<span class="tag part" style="margin:0">待核验</span></span>
+      </li>
+      <li>
+        <span class="gap-tag">边界</span><strong>图叠加层只写未查。</strong>
+        保存时写节点与边，但检索链路不消费任何图遍历函数；ADR-002 Phase 3 才计划接入。
+        <span class="fn-note"><span class="ev">graph_db.py:371</span> <span class="ev">:404</span>；无消费点（<code>src/</code> 全仓 grep <code>find_*</code>）；<span class="ev">adr-002-graph-database-overlay.md:165</span></span>
+      </li>
+    </ol>
+  </section>
+
+  <footer class="evidence">
+    <strong>证据索引（代码行号，基准 commit 274e597）</strong>
+    <div class="evgrid">
+      <span><code>mcp_tools/tools.py:332,342,420,440,448,457,460,471,484</code></span>
+      <span><code>services/persistence_svc.py:28,71,91,109,118,127,144,152,158</code></span>
+      <span><code>services/ingestion_svc.py:13,21,50,59,67,92</code></span>
+      <span><code>services/archive_svc.py:126,139,151,214,220</code></span>
+      <span><code>models/bug_record.py:31,77,92,108,143,145,175,193</code></span>
+      <span><code>models/convention_record.py:104,114,132,178,180,212,227</code></span>
+      <span><code>database/lancedb_client.py:61,62,194,207,220,236,350,368,386,417</code></span>
+      <span><code>database/graph_db.py:30,371,404</code></span>
+      <span><code>config.py:21,25,40,47,75</code></span>
+      <span><code>main.py:41,52,72</code></span>
+      <span><code>CONTEXT.md</code>（Archive / Index projection / Record establishment / Draft）</span>
+      <span><code>codex-docs/v2.0/convention-spec.md</code> / <code>codex-docs/refer/设计/adr-002-graph-database-overlay.md</code></span>
+    </div>
+    <p style="margin:12px 0 0">
+      本页只读代码与文档，未运行 pytest / benchmark、未启动服务、未加载嵌入模型；标注「待核验」的数字需运行确认。
+      文档与代码不一致处以代码为准，落差已写入工单 <code>09-data-model-and-index-consistency.md</code> 的 ## Answer。
+    </p>
+  </footer>
+
+</main>
+</body>
+</html>

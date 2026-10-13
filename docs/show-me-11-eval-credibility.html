@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>评测方法与结论可信度 · BugVault 离线 benchmark 的实验设计、对照与 Bad Case</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--line2:#f0f0f0;--ink:#141414;--ink2:#595959;--ink3:#8c8c8c;
+    --b1:#1677ff;--b2:#722ed1;--b4:#fa8c16;--b5:#52c41a;--warn:#d4380d;--warnbg:#fff2e8;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 24px 56px}
+  .wrap{max-width:1220px;margin:0 auto}
+  a{color:var(--b1);text-decoration:none}a:hover{text-decoration:underline}
+  header{margin-bottom:24px}
+  h1{font-size:clamp(20px,3vw,27px);font-weight:700;letter-spacing:-.01em}
+  h1 small{display:block;font-size:12.5px;font-weight:500;color:var(--ink3);letter-spacing:.05em;margin-top:6px;text-transform:uppercase}
+  .lede{margin-top:12px;color:var(--ink2);font-size:14.5px;max-width:90ch}.lede b{color:var(--ink);font-weight:600}
+  nav.top{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.top a{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;box-shadow:var(--shadow);color:var(--ink2)}
+  nav.top a.on{border-color:var(--b1);color:var(--b1);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;border-left:3px solid var(--pc,var(--b1))}
+  .p1{--pc:var(--b1)}.p2{--pc:var(--b2)}.p3{--pc:var(--b4)}.p4{--pc:var(--b5)}.p5{--pc:var(--warn)}
+  .phead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .phead .pt{font-size:15.5px;font-weight:700}
+  .phead .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#f0f5ff;color:var(--b1);border:1px solid #adc6ff;font-weight:600}
+  .phead .tag.warn{background:var(--warnbg);color:var(--warn);border-color:#ffbb96}
+  .phead .tag.ok{background:#f6ffed;color:#389e0d;border-color:#b7eb8f}
+  .phead .tag.pend{background:#fff7e6;color:#d46b08;border-color:#ffd591}
+  .phead .src{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3)}
+  .pdesc{font-size:13px;color:var(--ink2);margin:6px 0 16px}
+  code{font-family:var(--mono);font-size:11.5px;background:#fafafa;border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:13px;align-items:baseline}
+  .kv .k{font-family:var(--mono);font-size:11.5px;color:var(--b1);white-space:nowrap}
+  .kv .v{color:var(--ink2)}.kv .v b{color:var(--ink);font-weight:600}
+
+  .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px}
+  .pipe{border:1px solid var(--line);border-radius:11px;padding:12px 13px;background:#fcfcfd}
+  .pipe h4{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .pipe .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .pipe.v .dot{background:var(--b1)}.pipe.h .dot{background:var(--b2)}.pipe.f .dot{background:var(--b4)}
+  .pipe p{font-size:11.5px;color:var(--ink2);margin-top:7px;line-height:1.55}
+  .pipe .ln{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:8px;display:block}
+  .chip{font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px}
+  .chip.on{background:#f6ffed;color:#389e0d;border:1px solid #b7eb8f}
+  .chip.pend{background:#fff7e6;color:#d46b08;border:1px solid #ffd591}
+
+  /* 对照条形 */
+  .bars{margin-top:8px}
+  .brow{display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--line)}
+  .brow:last-child{border-bottom:none}
+  .blab{font-size:12px;font-weight:600;color:var(--ink)}
+  .btrack{display:grid;gap:5px}
+  .bar{display:flex;align-items:center;gap:8px;font-size:11.5px}
+  .bar .name{flex:0 0 84px;color:var(--ink2)}
+  .bar .fillwrap{flex:1;background:#f2f3f5;border-radius:5px;height:16px;overflow:hidden;min-width:90px}
+  .bar .fill{height:100%;border-radius:5px}
+  .bar.v .fill{background:linear-gradient(90deg,#69b1ff,#1677ff)}
+  .bar.h .fill{background:linear-gradient(90deg,#b37feb,#722ed1)}
+  .bar .val{flex:0 0 74px;font-family:var(--mono);font-size:11.5px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .delta{margin-top:12px;display:flex;flex-wrap:wrap;gap:10px}
+  .dbox{border:1px solid var(--line);border-radius:10px;padding:9px 13px;background:#fcfcfd;font-size:12px;color:var(--ink2)}
+  .dbox b{color:var(--ink);font-weight:700}
+  .dbox .rel{color:var(--b2);font-weight:700}
+  .dbox .abs{color:var(--ink);font-weight:700}
+
+  table.cmp{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+  table.cmp th,table.cmp td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  table.cmp th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  table.cmp td:first-child{color:var(--ink);font-weight:600}
+
+  .red{border-left:3px solid var(--warn);background:#fff9f5;border-radius:0 10px 10px 0;padding:12px 15px;font-size:13px;color:var(--ink2);margin-top:14px}
+  .red:first-of-type{margin-top:6px}
+  .red h4{font-size:13px;font-weight:700;color:var(--warn);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .red p{margin-top:7px;line-height:1.6}
+  .red b{color:var(--warn)}
+  .red ul{margin:8px 0 0;padding-left:18px;display:grid;gap:6px}
+  .red .badge{font-size:10px;font-weight:700;color:#fff;background:var(--warn);border-radius:5px;padding:1px 6px}
+  .big{font-family:var(--mono);font-weight:700;font-size:14px;color:var(--warn);font-variant-numeric:tabular-nums}
+
+  .flow{display:grid;gap:8px;margin-top:6px;font-size:12.5px;color:var(--ink2)}
+  .fstep{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:#fcfcfd;display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:baseline}
+  .fstep .n{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .fstep.fb .n{background:var(--warnbg);color:var(--warn)}
+  .fstep b{color:var(--ink);font-weight:600}
+
+  sup.fnref{font-family:var(--mono);font-size:9.5px;color:var(--b1);font-weight:700;margin-left:2px;vertical-align:super}
+
+  .facts{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+  .facts h3{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:600;margin-bottom:11px}
+  .facts ol{list-style:none;display:grid;gap:9px}
+  .facts li{display:flex;gap:11px;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .facts .fn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 6px;
+    border-radius:6px;background:#eef1f5;color:var(--ink2);font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+  .facts li b{color:var(--ink);font-weight:600}
+
+  footer{margin-top:32px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px 18px}
+  @media(max-width:960px){body{padding:22px 14px 44px}.panel{padding:16px 15px}.phead .src{margin-left:0;width:100%}
+    .pgrid{grid-template-columns:1fr}.brow{grid-template-columns:1fr}}
+  @media(max-width:720px){
+    .bar .name{flex:0 0 64px}
+    .bar .val{flex:0 0 62px}
+    table.cmp thead{display:none}
+    table.cmp tr{display:block;border-bottom:1px solid var(--line);padding:9px 0}
+    table.cmp td{display:block;border:none;padding:2px 0;width:auto!important}
+    table.cmp td::before{content:attr(data-label) "：";color:var(--ink3);font-size:10.5px;font-weight:600;letter-spacing:.04em}
+    table.cmp td:first-child{font-size:14px;margin-bottom:3px}
+  }
+  @media print{body{background:#fff;padding:0}.panel{box-shadow:none;break-inside:avoid}@page{margin:12mm}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>评测方法与结论可信度：实验设计，结论对照，Bad Case
+      <small>BugVault，链路 11，81 条合成 Bug，100 条查询，三条管线</small>
+    </h1>
+    <p class="lede">一张图讲清 <b>「+25.5%」在什么条件下成立，又在哪里站不住</b>：上排是评测构成与指标定义，中排是 Fact 与 Cross-Document 的 Recall@5 对照（同时给相对提升与绝对增量），下排用红色标出 <b>No-Answer 0% 拒答率</b>与<b>报告核心结论第 4 条的自相矛盾</b>，并画出 LLM-as-Judge 的策略，双重降级与成本边界。图上每个数字，字段名，函数名都来自代码或报告，需要运行才能确认的标<b>「待核验」</b>。</p>
+    <nav class="top">
+      <a href="show-me-index.html">&larr; 图纸索引</a>
+      <a href="show-me-09-save-and-index.html">09 保存与索引一致性</a>
+      <a href="show-me-10-hybrid-retrieval.html">10 混合检索与排序</a>
+      <a class="on" href="show-me-11-eval-credibility.html">11 评测可信度</a>
+      <a href="show-me-12-runtime-reliability.html">12 运行时可靠性</a>
+    </nav>
+  </header>
+
+  <!-- ============ 图① 实验构成 ============ -->
+  <section class="panel p1">
+    <div class="phead"><span class="pt">图① 实验构成：数据，管线，指标</span><span class="tag">离线合成集</span><span class="src">experiments/generate_test_data.py · experiments/benchmark_retrieval.py</span></div>
+    <p class="pdesc">知识库与查询都是<b>硬编码的合成数据</b>，不是线上流量；三条管线里，报告本次只跑了 Vector-only 与 Hybrid。</p>
+    <div class="kv">
+      <span class="k">知识库</span><span class="v"><b>81 条合成 Bug 记录</b>（<code>BUG_RECORDS</code>，<code>generate_test_data.py:19</code>；汇总取 <code>len(BUG_RECORDS)</code> 于 <code>:1153</code>）<sup class="fnref">1</sup></span>
+      <span class="k">测试查询</span><span class="v"><b>100 条</b> = Fact <b>40</b> + Cross-Document <b>30</b> + No-Answer <b>30</b>（<code>get_test_cases</code> 于 <code>generate_test_data.py:1137</code>；定义起点 <code>:744 / :948 / :1102</code>）<sup class="fnref">2</sup></span>
+      <span class="k">评价指标</span><span class="v">Recall@1/3/5，MRR，NDCG@5，平均延迟；逐查询计算于 <code>benchmark_retrieval.py:323–340</code> <sup class="fnref">4</sup></span>
+      <span class="k">运行方式</span><span class="v">临时目录 + 批量 query embedding，<code>main()</code> 于 <code>benchmark_retrieval.py:234</code></span>
+    </div>
+
+    <div class="pgrid">
+      <div class="pipe v">
+        <h4><span class="dot"></span>vector-only（Baseline）<span class="chip on">报告有</span></h4>
+        <p>纯向量 ANN 检索 + 语义 rerank，取 top-5。</p>
+        <span class="ln">pipeline_vector_only，benchmark_retrieval.py:99</span>
+      </div>
+      <div class="pipe h">
+        <h4><span class="dot"></span>hybrid（V+FTS+RRF）<span class="chip on">报告有</span></h4>
+        <p>向量 + FTS 双路召回，<code>rrf_fusion(k=60)</code> 融合后再 rerank。</p>
+        <span class="ln">pipeline_hybrid，benchmark_retrieval.py:113</span>
+      </div>
+      <div class="pipe f">
+        <h4><span class="dot"></span>full（Hybrid + CE）<span class="chip pend">报告缺</span></h4>
+        <p>在 hybrid 基础上加 Cross-Encoder 精排；需加载重排模型。</p>
+        <span class="ln">pipeline_full，benchmark_retrieval.py:136 · 数字<sup class="fnref">3</sup> 待核验</span>
+      </div>
+    </div>
+
+    <div class="red" style="border-left-color:var(--b1);background:#f7faff">
+      <h4 style="color:var(--b1)">Recall@5 的分子分母与计算落点</h4>
+      <p>函数 <code>compute_recall(retrieved_ids, relevant_ids, k)</code> 落在 <code>benchmark_retrieval.py:62</code>：<b>分子</b> <code>hits</code> = 前 k 条结果中 <code>record_id</code> 命中 ground-truth 相关集合的条数（<code>:65</code>）；<b>分母</b> <code>len(relevant_ids)</code> = 该查询的相关文档总数（<code>:66</code>）——<b>分母是相关文档数，不是 k</b>；无相关文档时直接返回 <code>0.0</code>（<code>:63–64</code>），所以 No-Answer 场景的 Recall 全部记 0。<sup class="fnref">5</sup> Recall@1/3/5 分别以 <code>k=1/3/5</code> 调用（<code>:323 / :326 / :329</code>）；MRR 在 <code>compute_mrr</code>（<code>:70</code>），NDCG@5 在 <code>compute_ndcg</code>（<code>:80</code>）；延迟用 <code>time.perf_counter()</code> 差值（<code>:106 / :109 / :132 / :166</code>）。<sup class="fnref">6</sup></p>
+    </div>
+  </section>
+
+  <!-- ============ 图② 结论对照 ============ -->
+  <section class="panel p2">
+    <div class="phead"><span class="pt">图② 结论对照：Fact 与 Cross-Document 的 Recall@5</span><span class="tag">Hybrid 对比 Vector-only</span><span class="src">experiments/report.md</span></div>
+    <p class="pdesc">条形只画 Recall@5。跨文档集提升明显，但<b>要同时说相对提升与绝对增量，不能把相对百分比说成绝对提升</b>。</p>
+    <div class="bars">
+      <div class="brow">
+        <div class="blab">Fact（40 条）</div>
+        <div class="btrack">
+          <div class="bar v"><span class="name">Vector-only</span><span class="fillwrap"><span class="fill" style="width:95.0%"></span></span><span class="val">0.4750</span></div>
+          <div class="bar h"><span class="name">Hybrid</span><span class="fillwrap"><span class="fill" style="width:97.5%"></span></span><span class="val">0.4875</span></div>
+        </div>
+      </div>
+      <div class="brow">
+        <div class="blab">Cross-Document（30 条）</div>
+        <div class="btrack">
+          <div class="bar v"><span class="name">Vector-only</span><span class="fillwrap"><span class="fill" style="width:41.34%"></span></span><span class="val">0.2067</span></div>
+          <div class="bar h"><span class="name">Hybrid</span><span class="fillwrap"><span class="fill" style="width:51.88%"></span></span><span class="val">0.2594</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="delta">
+      <div class="dbox">Fact：0.4750 → 0.4875，相对 <span class="rel">+2.6%</span>，绝对 <span class="abs">+0.0125</span><sup class="fnref">7</sup></div>
+      <div class="dbox">Cross-Document：0.2067 → 0.2594，相对 <span class="rel">+25.5%</span>，绝对 <span class="abs">+0.0527</span><sup class="fnref">8</sup></div>
+    </div>
+    <table class="cmp" style="margin-top:16px">
+      <thead><tr><th>场景</th><th>Vector-only Recall@5</th><th>Hybrid Recall@5</th><th>相对提升</th><th>绝对增量</th><th>MRR（V → H）</th></tr></thead>
+      <tbody>
+        <tr>
+          <td data-label="场景">Fact（40 条）</td>
+          <td data-label="Vector-only Recall@5">0.4750</td>
+          <td data-label="Hybrid Recall@5">0.4875</td>
+          <td data-label="相对提升"><span class="rel" style="color:var(--b2);font-weight:700">+2.6%</span></td>
+          <td data-label="绝对增量">+0.0125</td>
+          <td data-label="MRR">0.4925 → 0.5042</td>
+        </tr>
+        <tr>
+          <td data-label="场景">Cross-Document（30 条）</td>
+          <td data-label="Vector-only Recall@5">0.2067</td>
+          <td data-label="Hybrid Recall@5">0.2594</td>
+          <td data-label="相对提升"><span class="rel" style="color:var(--b2);font-weight:700">+25.5%</span></td>
+          <td data-label="绝对增量"><b>+0.0527</b></td>
+          <td data-label="MRR">0.3244 → 0.3317</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="red" style="border-left-color:var(--b4);background:#fffaf2">
+      <h4 style="color:#d46b08">两套总体口径，别混用</h4>
+      <p>报告「总体结果（所有场景）」把 No-Answer 的 0 计入平均：<code>0.2520 → 0.2728</code>；核心结论第 1 条只对 Fact + Cross-Document 取均值：<code>0.3600 → 0.3898</code>（+8.3%）。<b>同一份 +8.3% 有两套分母</b>，引用时必须说清是含拒答场景还是不含。<sup class="fnref">9</sup></p>
+    </div>
+  </section>
+
+  <!-- ============ 图③ Bad Case + Judge ============ -->
+  <section class="panel p5">
+    <div class="phead"><span class="pt">图③ Bad Case：No-Answer 拒答与报告自相矛盾</span><span class="tag warn">不可辩护</span><span class="src">experiments/report.md · benchmark_retrieval.py · retrieval_svc.py</span></div>
+
+    <div class="red">
+      <h4><span class="badge">红色</span>正确拒答率 0.00%：不能宣称可靠拒答</h4>
+      <p>实测两条管线<b>均 0%</b>：Vector-only <span class="big">0.00%</span>，平均仍返回 <span class="big">4.57</span> 条；Hybrid <span class="big">0.00%</span>，平均仍返回 <span class="big">5.00</span> 条。判定口径 <code>accuracy()</code>：只有返回 0 条才算拒答成功（<code>benchmark_retrieval.py:352</code>）——<b>本次没有任何一条 No-Answer 查询返回空结果</b>。<sup class="fnref">10</sup></p>
+    </div>
+
+    <div class="red">
+      <h4><span class="badge">红色</span>报告自相矛盾：核心结论第 4 条 vs 实测 0%</h4>
+      <p><code>report.md</code> 核心结论第 4 条写「<b>No-Answer 拒答可靠</b>：Full Pipeline 在面对无关查询时能有效返回空结果」，与同文件 No-Answer 表的 0% 拒答率直接冲突；且该结论点名 <b>Full Pipeline</b>，而本次运行根本没有 Full 行（<code>--skip-ce</code> 未跑 CE），结论既无数据支撑又指错管线。该条应标为<b>无效陈述</b>。<sup class="fnref">11</sup></p>
+    </div>
+
+    <div class="red">
+      <h4><span class="badge">归因</span>无 query 级相关性阈值，无拒答策略</h4>
+      <ul>
+        <li>唯一的「相关性门槛」是 <code>rerank()</code> 里<b>单文档</b>的 <code>min_semantic_score=0.50</code>（<code>retrieval_svc.py:419</code>；<code>config.py:29</code>），它是逐条丢弃低分文档，<b>不是</b>「整条查询判定无答案」的拒答。</li>
+        <li>hybrid 路径在融合后主动 <code>pop("_distance")</code>（<code>benchmark_retrieval.py:130</code>），<code>rerank()</code> 走 <code>_rrf_score</code> 分支（<code>retrieval_svc.py:422–424</code>），<b>阈值完全不生效</b>，必然凑满 top-5 → 平均返回 5.00。</li>
+        <li>结论：当前检索<b>没有</b>空结果/弃答分支，No-Answer 场景只能靠「碰巧没有候选」，所以 0% 是结构性而非偶然。<sup class="fnref">12</sup></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel p4">
+    <div class="phead"><span class="pt">图③附 LLM-as-Judge：策略，双重降级与成本边界</span><span class="tag pend">默认关闭</span><span class="src">src/bugvault/services/rag_evaluator_svc.py · config.py</span></div>
+    <p class="pdesc">评测是检索之后的<b>辅助评分步骤</b>，不是检索的一部分；失败只丢评分，不阻断结果返回。</p>
+    <div class="kv">
+      <span class="k">默认开关</span><span class="v"><b><code>enable_rag_eval=False</code></b>（<code>config.py:50</code>）；关闭或未配 API key 时 <code>evaluate()</code> 直接返回空结果（<code>rag_evaluator_svc.py:568–569</code>）<sup class="fnref">13</sup></span>
+      <span class="k">策略选择</span><span class="v"><code>eval_depth</code> 运行时选：<code>"simple"</code>（整体打分）或 <code>"claim_level"</code>（声明提取 + 逐条验证）——<code>RAGEvaluator.evaluate</code>（<code>:550</code>），Simple 类 <code>:128</code>，ClaimLevel 类 <code>:298</code></span>
+      <span class="k">评测范围</span><span class="v"><code>eval_top_k=3</code>（<code>config.py:54</code>），只评前 3 条检索结果</span>
+    </div>
+    <div class="flow">
+      <div class="fstep fb"><span class="n">降1</span><span><b>配额超限 → simple</b>：<code>claim_level</code> 计数达到 <code>max_claim_evals_per_session=10</code>（<code>config.py:64</code>）即降级，标记 <code>strategy_used="simple"</code>（<code>rag_evaluator_svc.py:593–601</code>）。</span></div>
+      <div class="fstep fb"><span class="n">降2</span><span><b>异常 → simple fallback</b>：claim_level 调用中任意异常（JSON 解析，超时，API 失败）被捕获，降级到 simple，标记 <code>strategy_used="simple (fallback_from_error)"</code>，调用方看不到异常（<code>:605–616</code>）。<sup class="fnref">14</sup></span></div>
+      <div class="fstep"><span class="n">成本</span><span><b>claim_level 约 1.6k tokens/次</b>，耗时远大于检索（检索延迟仅 0.03–0.05s）。token 估算来自设计文档 <code>codex-docs/refer/设计/evaluation-strategy.md</code>（simple ~300，claim_level ~1500）；代码只固定 <code>max_tokens</code>（simple 256 于 <code>:236</code>，claim 2048 于 <code>:440</code>），<b>实际 token 与耗时待核验</b>。<sup class="fnref">15</sup></span></div>
+    </div>
+    <div class="red" style="border-left-color:var(--warn);background:#fff9f5">
+      <h4><span class="badge">落差</span>计数器是进程内全局类变量，不是会话级</h4>
+      <p><code>RAGEvaluator._claim_counter</code> 是<b>类变量</b>（<code>rag_evaluator_svc.py:528</code>，注释写作「session-scoped, never reset」，<code>config.py:64</code> 也写「session-wide cap」），但类变量在进程内所有会话，所有客户端间共享，<b>不会随会话重置</b>。所以真实口径是<b>进程生命周期内全局熔断</b>，不能说成「会话级配额」。<sup class="fnref">14</sup></p>
+    </div>
+  </section>
+
+  <section class="panel p3">
+    <div class="phead"><span class="pt">复现命令与边界</span><span class="tag pend">离线合成集</span><span class="src">benchmark_retrieval.py · resume/active/bugvault-project-fact-card.md</span></div>
+    <div class="kv">
+      <span class="k">复现命令</span><span class="v"><code>uv run python experiments/benchmark_retrieval.py</code>；跳过 Cross-Encoder 加 <code>--skip-ce</code>（<code>benchmark_retrieval.py:1–7</code> 用法说明，<code>skip_ce</code> 参数于 <code>main</code>）</span>
+      <span class="k">随机种子</span><span class="v"><b>未使用 seed</b>：数据集是 <code>generate_test_data.py</code> 里的硬编码字面量（grep 无 <code>random</code>/<code>seed</code>，仅示例字符串含 <code>np.random.rand</code>），数字可离线复现，但运行需要可用的嵌入模型<sup class="fnref">16</sup></span>
+      <span class="k">效果边界</span><span class="v">报告数字是<b>离线合成集</b>，不是线上效果；只带样本规模，管线和场景引用，不泛化（事实卡 §6/§6.1，<code>bugvault-project-fact-card.md:89 / :105</code>）</span>
+      <span class="k">已删除口径</span><span class="v">历史「重复率降低 70%+」因缺分子分母样本对照组已从简历删除，<b>不得出现在任何主张里</b></span>
+    </div>
+  </section>
+
+  <!-- ============ 图下脚注 ============ -->
+  <section class="panel p1" style="--pc:#8c8c8c">
+    <div class="facts">
+      <h3>图下脚注（按序号对照，证据精确到文件:行号）</h3>
+      <ol>
+        <li><span class="fn">1</span><span><b>知识库规模</b>：<code>experiments/generate_test_data.py:19</code>（<code>BUG_RECORDS</code> 定义），<code>:1153</code>（<code>get_test_case_summary()</code> 返回 <code>len(BUG_RECORDS)</code>）；数值 81 见 <code>experiments/report.md</code> 实验概述。</span></li>
+        <li><span class="fn">2</span><span><b>查询构成</b>：<code>generate_test_data.py:1137</code>（<code>get_test_cases = FACT + CROSS_DOC + NO_ANSWER</code>）；三段定义起点 <code>:744</code>（Fact），<code>:948</code>（Cross-Document），<code>:1102</code>（No-Answer）。40 / 30 / 30 见 <code>report.md</code> 实验概述。</span></li>
+        <li><span class="fn">3</span><span><b>三条管线</b>：<code>benchmark_retrieval.py:99</code>（vector-only），<code>:113</code>（hybrid），<code>:136</code>（full）；注册字典 <code>:274–279</code>（<code>--skip-ce</code> 时不注册 Full）。<code>report.md</code> 本次结果表只有 Vector-only 与 Hybrid 两行，<b>Full 数字缺失，标待核验</b>。</span></li>
+        <li><span class="fn">4</span><span><b>指标与逐查询计算</b>：<code>report.md</code>「评价指标」行；计算落点 <code>benchmark_retrieval.py:323–340</code>（<code>recall_1 / recall_3 / recall_5 / mrr / ndcg_5 / latency / result_count</code>）。</span></li>
+        <li><span class="fn">5</span><span><b>Recall@K 分子分母</b>：<code>compute_recall</code> <code>benchmark_retrieval.py:62</code>；分子 <code>hits = sum(1 for rid in retrieved_ids[:k] if rid in relevant_ids)</code> <code>:65</code>；分母 <code>len(relevant_ids)</code> <code>:66</code>；空相关集返回 <code>0.0</code> <code>:63–64</code>。</span></li>
+        <li><span class="fn">6</span><span><b>MRR / NDCG / 延迟</b>：<code>compute_mrr</code> <code>:70</code>，<code>compute_ndcg</code> <code>:80</code>（二元相关，近似 <code>1/(i+1)</code>），延迟 <code>time.perf_counter()</code> 差值 <code>:106 / :109 / :132 / :166</code>。</span></li>
+        <li><span class="fn">7</span><span><b>Fact 对照</b>：<code>report.md</code> Fact Retrieval 表（0.4750 / 0.4875，MRR 0.4925 / 0.5042）；相对 <code>+2.6%</code> 见同文「事实查询」分析。绝对增量 <code>0.4875 − 0.4750 = 0.0125</code>。</span></li>
+        <li><span class="fn">8</span><span><b>Cross-Document 对照</b>：<code>report.md</code> Cross-Document 表（0.2067 / 0.2594，MRR 0.3244 / 0.3317）；相对 <code>+25.5%</code> 见「跨文档综合」分析。绝对增量 <code>0.2594 − 0.2067 = 0.0527</code>。</span></li>
+        <li><span class="fn">9</span><span><b>两套总体口径</b>：<code>report.md</code>「总体结果（所有场景）」含 No-Answer 的 0（<code>0.2520 / 0.2728</code>）；「核心结论」第 1 条只对 Fact + Cross 取均值（<code>0.3600 / 0.3898</code>，+8.3%）。两处分母不同。</span></li>
+        <li><span class="fn">10</span><span><b>No-Answer 实测</b>：<code>report.md</code> No-Answer 表（Vector-only 0.00% / 4.57 条；Hybrid 0.00% / 5.00 条）；拒答判定 <code>accuracy()</code> 于 <code>benchmark_retrieval.py:352</code>（<code>v == 0</code> 才算成功）。</span></li>
+        <li><span class="fn">11</span><span><b>报告自相矛盾</b>：<code>report.md</code> 核心结论第 4 条「No-Answer 拒答可靠：Full Pipeline 能有效返回空结果」对比同文件 No-Answer 表实测 0%；且本次运行为 <code>--skip-ce</code> 语义（无 Full 行），结论指名的管线未运行。</span></li>
+        <li><span class="fn">12</span><span><b>Bad Case 归因</b>：<code>retrieval_svc.py:419</code>（单文档 <code>semantic &lt; settings.min_semantic_score</code> 丢弃）与 <code>config.py:29</code>（<code>min_semantic_score=0.50</code>）；hybrid 路径 <code>benchmark_retrieval.py:130</code>（<code>pop("_distance")</code>）后走 <code>retrieval_svc.py:422–424</code> 的 <code>_rrf_score</code> 分支，阈值不生效；全链路无 query 级拒答分支。</span></li>
+        <li><span class="fn">13</span><span><b>Judge 开关与策略</b>：<code>config.py:50</code>（<code>enable_rag_eval=False</code>），<code>:54</code>（<code>eval_top_k=3</code>）；<code>rag_evaluator_svc.py:568–569</code>（关闭直接返回空），<code>:550</code>（<code>evaluate(eval_depth)</code>），<code>:128</code>（Simple），<code>:298</code>（ClaimLevel）。</span></li>
+        <li><span class="fn">14</span><span><b>双重降级与计数器落差</b>：配额降级 <code>rag_evaluator_svc.py:593–601</code>，异常降级 <code>:605–616</code>（<code>strategy_used="simple (fallback_from_error)"</code>）；<code>config.py:64</code>（<code>max_claim_evals_per_session=10</code>）；<code>rag_evaluator_svc.py:528</code>（<code>_claim_counter: int = 0</code> 为<b>类变量</b>，进程内共享，非会话级）。</span></li>
+        <li><span class="fn">15</span><span><b>Judge 成本</b>：设计文档 <code>codex-docs/refer/设计/evaluation-strategy.md</code>（simple ~300，claim_level ~1500 tokens）；代码仅固定 <code>max_tokens</code>（<code>rag_evaluator_svc.py:236</code> 为 256，<code>:440</code> 为 2048）。工单记「约 1.6k」，与设计文档 ~1500 有出入，实际用量<b>待核验</b>。评分失败不阻断检索（检索主链路独立）。</span></li>
+        <li><span class="fn">16</span><span><b>复现边界</b>：用法 <code>benchmark_retrieval.py:1–7</code>；数据集为硬编码字面量，未使用 <code>seed</code>/<code>random</code>。离线合成集，非线上效果，见 <code>resume/active/bugvault-project-fact-card.md:89</code>（§6）与 <code>:105</code>（§6.1）。</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    <span>BugVault · 链路 11 · 评测方法与结论可信度</span>
+    <span>只读代码与文档，未改业务代码；本会话未运行 pytest/benchmark，未启动服务，未加载嵌入模型。</span>
+    <span>数字来源：<code>experiments/report.md</code>，<code>experiments/benchmark_retrieval.py</code>，<code>src/bugvault/services/rag_evaluator_svc.py</code></span>
+  </footer>
+</div>
+</body>
+</html>
